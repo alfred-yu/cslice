@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cslice"
+dynamic = ["version"]
+description = "AST-based logical-block slicing for C functions (computation/branch/loop/case/preproc), powered by tree-sitter"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [{ name = "Alfred" }]
+keywords = ["c", "ast", "tree-sitter", "parser", "slicing", "requirements"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: C",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Repository = "https://github.com/alfred-yu/cslice"
+Issues = "https://github.com/alfred-yu/cslice/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "cslice._native"
+manifest-path = "crates/cslice-py/Cargo.toml"
+features = ["pyo3/extension-module", "pyo3/abi3-py38"]
+# Windows 产物附带调试符号，不进 wheel
+exclude = [{ path = "**/*.pdb", format = "wheel" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

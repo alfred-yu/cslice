@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["*"]
+  pull_request:
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pip install maturin pytest
+      - run: maturin build --out dist
+      - run: pip install cslice --find-links dist --force-reinstall
+      - run: pytest -v
+
+  # tag 推送时构建三平台 wheel 并发布 PyPI（需在 GitHub 仓库设置 PyPI trusted publisher）
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [rust-test, python-test]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist --find-interpreter
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

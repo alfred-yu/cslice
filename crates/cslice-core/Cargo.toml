@@ -1,0 +1,10 @@
+[package]
+name = "cslice-core"
+version = "0.1.0"
+description = "C 函数逻辑块切分引擎：tree-sitter AST 切分 + 行范围代码快照（无状态纯函数）"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+tree-sitter = "0.24"
+tree-sitter-c = "0.23"

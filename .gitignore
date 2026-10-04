@@ -1,0 +1,10 @@
+/target
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.pytest_cache/
+python/cslice/*.pyd
+python/cslice/*.pdb

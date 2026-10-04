@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["crates/cslice-core", "crates/cslice-py"]
