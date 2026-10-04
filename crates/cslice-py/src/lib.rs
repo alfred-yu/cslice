@@ -303,5 +303,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_lines, m)?)?;
     m.add_function(wrap_pyfunction!(slice_all, m)?)?;
     m.add("KINDS", PyTuple::new(m.py(), KINDS)?)?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

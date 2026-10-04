@@ -11,13 +11,12 @@ from cslice._native import (
     FunctionDef,
     FunctionPlan,
     SlicePlanItem,
+    __version__,
     extract_lines,
     parse_functions,
     plan_function_slices,
     slice_all,
 )
-
-__version__ = "0.1.0"
 
 __all__ = [
     "Behavior",
@@ -26,6 +25,7 @@ __all__ = [
     "FunctionPlan",
     "KINDS",
     "SlicePlanItem",
+    "__version__",
     "extract_lines",
     "parse_functions",
     "plan_function_slices",

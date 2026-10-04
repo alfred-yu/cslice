@@ -6,6 +6,7 @@ BehaviorKind = Literal[
 ]
 
 KINDS: Tuple[SliceKind, ...]
+__version__: str
 
 
 class Behavior:
