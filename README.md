@@ -160,6 +160,32 @@ i < len holds, …".
 No LLM, no network: `cslice.drafts` never makes external calls; AI-based
 enhancement belongs to the caller.
 
+## Visualization (optional)
+
+`cslice.viz` renders slicing results for humans — pure standard library, no
+third-party dependencies.
+
+**Text view** (line-annotated source, slice tree, details with guards,
+optional drafts):
+
+```bash
+python -m cslice driver.c                    # annotated + tree + details
+python -m cslice driver.c --drafts --lang zh # + requirement drafts (Chinese)
+python -m cslice driver.c --out report.md    # write to file
+```
+
+**Mermaid export** (paste into GitHub / VSCode / Obsidian — they render it
+natively):
+
+```bash
+python -m cslice driver.c --cfg-mermaid      # CFG flowchart per function
+python -m cslice driver.c --forest-mermaid   # slice containment forest
+```
+
+Programmatic API: `viz.annotated_source`, `viz.slice_tree`, `viz.slice_details`,
+`viz.render_plan` / `render_source` (optional drafts), `viz.cfg_to_mermaid`,
+`viz.forest_to_mermaid`.
+
 ## License
 
 MIT

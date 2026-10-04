@@ -117,6 +117,29 @@ drafts = generate_drafts(funcs[0].name, items)                      # 批量
 
 不含 LLM、无网络调用：AI 增强属调用方职责。
 
+## 可视化（可选）
+
+`cslice.viz` 把切分结果渲染给人看——纯标准库、零第三方依赖。
+
+**文本视图**（逐行归属标注、切片树、含守卫的明细、可选草稿）：
+
+```bash
+python -m cslice driver.c                    # 归属标注 + 树 + 明细
+python -m cslice driver.c --drafts --lang zh # 附带中文需求草稿
+python -m cslice driver.c --out report.md    # 写入文件
+```
+
+**Mermaid 导出**（粘进 GitHub / VSCode / Obsidian 即可原生渲染）：
+
+```bash
+python -m cslice driver.c --cfg-mermaid      # 每个函数的 CFG 流程图
+python -m cslice driver.c --forest-mermaid   # 切片森林包含树
+```
+
+编程接口：`viz.annotated_source`、`viz.slice_tree`、`viz.slice_details`、
+`viz.render_plan` / `render_source`（可选草稿）、`viz.cfg_to_mermaid`、
+`viz.forest_to_mermaid`。
+
 ## 许可证
 
 MIT
