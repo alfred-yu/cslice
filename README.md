@@ -1,12 +1,13 @@
 # cslice — AST-based logical-block slicing for C functions
 
-`cslice` parses C source code with [tree-sitter](https://tree-sitter.github.io/) and
-splits each function body into **logical blocks** — the atomic, individually
-describable pieces of behavior a function is made of. Each slice carries its line
-range, block kind, extracted code text, and a semantic summary (conditions,
-loop control, assignment/call/return behaviors) ready for downstream analysis:
-reverse-engineered requirements (DO-178C style), code review checklists,
-coverage mapping, or documentation.
+`cslice` parses C source code with [tree-sitter](https://tree-sitter.github.io/)
+and splits each function body into **logical blocks** — the atomic pieces of
+behavior a function is made of: branches, loops, switch cases, runs of simple
+statements, conditional-compilation blocks. Each slice carries its line range,
+block kind, extracted code text, and a semantic summary (conditions, loop
+control, assignments / calls / returns), ready for downstream use: code
+comprehension, review checklists, coverage mapping, static-analysis tooling,
+or documentation.
 
 The heavy lifting is a pure-Rust core compiled to a native Python extension
 (PyO3) — no Python-side parsing, no external tools.
@@ -14,7 +15,7 @@ The heavy lifting is a pure-Rust core compiled to a native Python extension
 ## Install
 
 ```bash
-pip install cslice        # once published
+pip install cslice
 ```
 
 Build from source (requires Rust toolchain):
@@ -43,7 +44,7 @@ funcs = cslice.parse_functions(source)
 items = cslice.plan_function_slices(source, funcs[0].start_line, funcs[0].end_line)
 ```
 
-Example output for a branch inside a loop:
+Example output for a function containing a loop with nested branches:
 
 ```
 Crc32 L1-L21 [static uint32_t Crc32(...)]
@@ -71,7 +72,7 @@ Slice kinds (`cslice.KINDS`):
 |---|---|
 | `computation` | Runs of simple statements (assign / call / return), initialized declarations |
 | `branch` | One `if` / `else-if` / `else` arm each |
-| `loop` | The loop **header only** — iteration control is its own behavior |
+| `loop` | The loop **header only** — iteration control is its own slice |
 | `case` | One `switch` case / default each (switch head folds into the first case) |
 | `preproc` | A conditional-compilation block as a whole |
 
@@ -86,10 +87,10 @@ an ordered list of `Behavior` facts (`init`, `assign`, `compound_assign`,
 - **Exact behavior boundaries**: signature lines, braces, comments and bare
   declarations belong to no slice; a top-level `return` is always its own slice
   (data preparation vs. observable result).
-- **DO-178C-style atomicity**: nested control flow inside a loop body is split
-  recursively — loop header, nested branches/loops/switches and the statements
-  between them each get their own slice. Nested slices carry the parent loop
-  condition in `summary.parent_loop_cond`.
+- **Atomicity**: nested control flow inside a loop body is split recursively —
+  loop header, nested branches/loops/switches and the statements between them
+  each get their own slice. Nested slices carry the parent loop condition in
+  `summary.parent_loop_cond`.
 - Initialized declarations are standalone slices; bare declarations are skipped
   (nothing to describe).
 - Empty bodies and unparseable functions degrade to a single fallback slice.
@@ -98,10 +99,10 @@ an ordered list of `Behavior` facts (`init`, `assign`, `compound_assign`,
 
 `cslice` 基于 tree-sitter 把 C 函数体切分为**逻辑块**（计算 / 分支 / 循环 /
 case / 条件编译五类），每个切片带行范围、代码文本与语义摘要（条件表达式、
-循环三段式、赋值/调用/返回等行为清单）。切片遵循"精确行为边界"与
-"原子性"原则：签名行、大括号、注释、纯声明不归属任何片；顶层 return
-独立成片；循环体内嵌套控制流递归拆分并携带父循环条件。适用于逆向需求
-草稿生成（DO-178C 低层需求）、代码审查清单、覆盖映射等场景。
+循环三段式、赋值/调用/返回等行为清单），可直接用于代码理解、审查清单、
+覆盖映射、静态分析工具等场景。切分遵循"精确行为边界"与"原子性"原则：
+签名行、大括号、注释、纯声明不归属任何片；顶层 return 独立成片；
+循环体内嵌套控制流递归拆分并携带父循环条件。
 
 ## License
 
