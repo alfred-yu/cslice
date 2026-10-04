@@ -79,3 +79,6 @@ jobs:
           merge-multiple: true
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # 幂等重跑：已存在的同名文件跳过（发布 run 中途失败重发时避免撞车）
+          skip-existing: true
