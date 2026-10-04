@@ -178,10 +178,17 @@ impl From<&core::BlockSummary> for PyBlockSummary {
     }
 }
 
-/// 一个切片：函数体内可独立描述为一条需求的代码块。
+/// 一个切片：函数体内可独立描述的原子行为代码块。
+/// 全部切片构成深度优先森林：父片必先于子片出现（从顶向下、从外到内）。
 #[pyclass(get_all, skip_from_py_object, name = "SlicePlanItem")]
 #[derive(Clone)]
 struct PySlicePlanItem {
+    /// 函数内序号（0-based，等于列表下标）
+    id: u32,
+    /// 包裹本片的循环头片 id；顶层片为 None
+    parent_id: Option<u32>,
+    /// 嵌套深度：函数体顶层为 0，进入循环体 +1
+    depth: u32,
     /// 1-based 起始行（含）
     start_line: u32,
     /// 1-based 结束行（含）
@@ -199,6 +206,9 @@ impl PySlicePlanItem {
         let code_text = core::extract_lines(source, item.start_line as i64, item.end_line as i64)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
+            id: item.id,
+            parent_id: item.parent_id,
+            depth: item.depth,
             start_line: item.start_line,
             end_line: item.end_line,
             kind: item.kind.as_str().to_string(),
@@ -236,7 +246,10 @@ struct PyFunctionPlan {
 /// tree-sitter 容错解析：语法错误时仍尽量返回可识别的函数。
 #[pyfunction]
 fn parse_functions(source: &str) -> Vec<PyFunctionDef> {
-    core::parse_functions(source).into_iter().map(Into::into).collect()
+    core::parse_functions(source)
+        .into_iter()
+        .map(Into::into)
+        .collect()
 }
 
 /// 按行范围定位函数并生成逻辑块切片计划（1-based 含端点，须精确匹配函数起止行）。

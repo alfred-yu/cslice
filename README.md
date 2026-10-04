@@ -84,6 +84,14 @@ Slice kinds (`cslice.KINDS`):
 an ordered list of `Behavior` facts (`init`, `assign`, `compound_assign`,
 `return`, `call`, `break`, `continue`).
 
+Slices form a **depth-first forest**: each `SlicePlanItem` also carries `id`
+(its index in the list), `parent_id` (`None` at function-body top level,
+otherwise the id of the enclosing loop-header slice), and `depth` (0 at top
+level, +1 inside a loop body). Items are emitted top-down, outer-before-inner:
+a parent slice always appears before all of its children, so
+`items[item.parent_id]` and an indentation by `depth` reconstruct the
+containment tree directly.
+
 ## Slicing rules
 
 - **Exact behavior boundaries**: signature lines, braces, comments and bare

@@ -54,8 +54,12 @@ class FunctionDef:
 
 
 class SlicePlanItem:
-    """一个切片：函数体内可独立描述为一条需求的代码块。"""
+    """一个切片：函数体内可独立描述的原子行为代码块。全部切片构成
+    深度优先森林：父片必先于子片出现（从顶向下、从外到内）。"""
 
+    id: int  # 函数内序号（0-based，等于列表下标）
+    parent_id: Optional[int]  # 包裹本片的循环头片 id；顶层片为 None
+    depth: int  # 嵌套深度：函数体顶层 0，进入循环体 +1
     start_line: int  # 1-based（含）
     end_line: int  # 1-based（含）
     kind: SliceKind

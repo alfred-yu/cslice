@@ -72,6 +72,8 @@ Crc32 L1-L21 [static uint32_t Crc32(...)]
 
 `SlicePlanItem.summary`（`BlockSummary`）携带从 AST 提取的事实：`condition`、`is_else`、`case_value`、`loop_header`、`loop_init/cond/update`、`preproc_directive`、`parent_loop_cond`（嵌套片携带父循环条件），以及按源码顺序排列的行为清单 `behaviors`（`init`、`assign`、`compound_assign`、`return`、`call`、`break`、`continue`）。
 
+切片构成一棵**深度优先森林**：每个 `SlicePlanItem` 还携带 `id`（即列表下标）、`parent_id`（顶层片为 `None`，否则为包裹本片的循环头片 id）和 `depth`（顶层 0，进入循环体 +1）。输出顺序从顶向下、从外到内：父片必先于其全部子片出现，因此 `items[item.parent_id]` 加上按 `depth` 缩进即可直接重建包含树。
+
 ## 切分规则
 
 - **精确行为边界**：签名行、大括号、注释、纯声明不归属任何切片；顶层 `return` 始终独立成片（数据准备与可观测结果分开）。

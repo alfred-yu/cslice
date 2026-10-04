@@ -42,9 +42,7 @@ pub fn parse_functions(content: &str) -> Vec<FunctionDef> {
 /// 创建并配置 C 语法解析器。
 pub(crate) fn new_parser() -> Option<Parser> {
     let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_c::LANGUAGE.into())
-        .ok()?;
+    parser.set_language(&tree_sitter_c::LANGUAGE.into()).ok()?;
     Some(parser)
 }
 
@@ -148,15 +146,27 @@ impl SlicePlanKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Behavior {
     /// 声明带初始化：var = value（如 y = 0）
-    Init { var: String, value: String },
+    Init {
+        var: String,
+        value: String,
+    },
     /// 普通赋值：lhs = rhs（operator 为 "="）
-    Assign { lhs: String, rhs: String },
+    Assign {
+        lhs: String,
+        rhs: String,
+    },
     /// 复合赋值（y += i、y &= x 等），保留原表达式文本
-    CompoundAssign { text: String },
+    CompoundAssign {
+        text: String,
+    },
     /// return 语句（裸 return 时 expr 为空串）
-    Return { expr: String },
+    Return {
+        expr: String,
+    },
     /// 函数调用（函数名）
-    Call { name: String },
+    Call {
+        name: String,
+    },
     Break,
     Continue,
 }
@@ -187,9 +197,21 @@ pub struct BlockSummary {
     pub behavior_count: u32,
 }
 
-/// 自动切片计划项（1-based 行范围，含端点）
+/// 自动切片计划项（1-based 行范围，含端点）。
+///
+/// 切片构成一棵深度优先森林：`id` 即该片在输出列表中的下标，
+/// 父片必先于子片出现（从顶向下、从外到内）。
+/// - `depth`：嵌套深度，函数体顶层为 0，进入循环体 +1；
+/// - `parent_id`：包裹本片的循环头片 id（循环体内的直接语句片与
+///   嵌套控制流片指向该循环）；顶层片为 [`None`]。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlicePlanItem {
+    /// 函数内序号（0-based，等于其在输出列表中的下标）
+    pub id: u32,
+    /// 包裹本片的循环头片 id；顶层片为 None
+    pub parent_id: Option<u32>,
+    /// 嵌套深度：顶层 0，循环体内递归 +1
+    pub depth: u32,
     pub start_line: u32,
     pub end_line: u32,
     pub kind: SlicePlanKind,
@@ -252,6 +274,9 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     let func_end = func.end_position().row as u32 + 1;
     let Some(body) = func.child_by_field_name("body") else {
         return vec![SlicePlanItem {
+            id: 0,
+            parent_id: None,
+            depth: 0,
             start_line: func_start,
             end_line: func_end,
             kind: SlicePlanKind::Computation,
@@ -309,15 +334,15 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             "{" | "}" | "comment" => {}
             "if_statement" => {
                 flush_group(&mut group, &mut blocks, content);
-                plan_if_chain(&child, content, &mut blocks, None);
+                plan_if_chain(&child, content, &mut blocks, None, 0, None);
             }
             "for_statement" | "while_statement" | "do_statement" => {
                 flush_group(&mut group, &mut blocks, content);
-                plan_loop(&child, content, &mut blocks, None);
+                plan_loop(&child, content, &mut blocks, None, 0, None);
             }
             "switch_statement" => {
                 flush_group(&mut group, &mut blocks, content);
-                plan_switch(&child, content, &mut blocks, None);
+                plan_switch(&child, content, &mut blocks, None, 0, None);
             }
             k if k.starts_with("preproc_") => {
                 flush_group(&mut group, &mut blocks, content);
@@ -329,6 +354,8 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                     natural_end: child.end_position().row as u32 + 1,
                     kind: SlicePlanKind::Preproc,
                     summary,
+                    depth: 0,
+                    parent_id: None,
                 });
             }
             "return_statement" => {
@@ -342,6 +369,8 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                     natural_end: child.end_position().row as u32 + 1,
                     kind: SlicePlanKind::Computation,
                     summary,
+                    depth: 0,
+                    parent_id: None,
                 });
             }
             "declaration" => {
@@ -365,6 +394,8 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                         natural_end: child.end_position().row as u32 + 1,
                         kind: SlicePlanKind::Computation,
                         summary,
+                        depth: 0,
+                        parent_id: None,
                     });
                 }
             }
@@ -389,13 +420,16 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     //    起点压到前片结束 + 1 消除重叠。纯声明/注释/空行不归属任何片
     //    （片间允许未覆盖行），切片范围与其需求描述的行为精确对应。
     let mut result: Vec<SlicePlanItem> = Vec::new();
-    for block in blocks {
+    for (id, block) in blocks.into_iter().enumerate() {
         let start = match result.last() {
             Some(prev) => block.natural_start.max(prev.end_line + 1),
             None => block.natural_start,
         };
         let end = block.natural_end.max(start);
         result.push(SlicePlanItem {
+            id: id as u32,
+            parent_id: block.parent_id,
+            depth: block.depth,
             start_line: start,
             end_line: end,
             kind: block.kind,
@@ -409,6 +443,9 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     if result.is_empty() {
         let end = if base <= body_end { body_end } else { func_end };
         return vec![SlicePlanItem {
+            id: 0,
+            parent_id: None,
+            depth: 0,
             start_line: base.min(end),
             end_line: end,
             kind: SlicePlanKind::Computation,
@@ -418,15 +455,20 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     result
 }
 
-/// 切分中的中间结构：自然行范围 + 块类型 + 语义摘要
+/// 切分中的中间结构：自然行范围 + 块类型 + 语义摘要 + 树位置
 struct PlannedBlock {
     natural_start: u32,
     natural_end: u32,
     kind: SlicePlanKind,
     summary: BlockSummary,
+    /// 嵌套深度：函数体顶层 0，循环体内 +1
+    depth: u32,
+    /// 包裹本片的循环头片在 blocks 中的下标；顶层为 None
+    parent_id: Option<u32>,
 }
 
-/// 将当前累积的简单语句组作为一个计算片输出（聚合子节点行为）
+/// 将当前累积的简单语句组作为一个计算片输出（聚合子节点行为）。
+/// 仅用于函数体顶层聚合：切片恒为深度 0、无父片。
 fn flush_group(
     group: &mut Option<(u32, u32, Vec<Node>)>,
     blocks: &mut Vec<PlannedBlock>,
@@ -442,6 +484,8 @@ fn flush_group(
             natural_end: e,
             kind: SlicePlanKind::Computation,
             summary,
+            depth: 0,
+            parent_id: None,
         });
     }
 }
@@ -449,7 +493,14 @@ fn flush_group(
 /// 拆分 if / else-if / else 链：每个分支一片（含条件与完整分支体）。
 /// 嵌套在分支体内部的 if 不拆（随所属分支成片）；分支位于循环体内时
 /// parent_loop_cond 携带外层循环条件（需求上下文）。
-fn plan_if_chain(if_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_loop_cond: Option<&str>) {
+fn plan_if_chain(
+    if_node: &Node,
+    content: &str,
+    blocks: &mut Vec<PlannedBlock>,
+    parent_loop_cond: Option<&str>,
+    depth: u32,
+    parent_id: Option<u32>,
+) {
     // 首个 if 片：语句头（含条件）到 consequence 结束
     let start = if_node.start_position().row as u32 + 1;
     let end = if_node
@@ -469,6 +520,8 @@ fn plan_if_chain(if_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, 
         natural_end: end,
         kind: SlicePlanKind::Branch,
         summary,
+        depth,
+        parent_id,
     });
 
     // 沿 else_clause 链逐分支拆分；alternative 内部语句无字段名
@@ -495,6 +548,8 @@ fn plan_if_chain(if_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, 
                     natural_end: inner_end,
                     kind: SlicePlanKind::Branch,
                     summary,
+                    depth,
+                    parent_id,
                 });
                 current = inner;
             }
@@ -509,6 +564,8 @@ fn plan_if_chain(if_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, 
                     natural_end: alt.end_position().row as u32 + 1,
                     kind: SlicePlanKind::Branch,
                     summary,
+                    depth,
+                    parent_id,
                 });
                 return;
             }
@@ -525,7 +582,14 @@ fn plan_if_chain(if_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, 
 /// `while (cond);` 条件行）不归属任何片。parent_loop_cond 为外层循环条件
 /// （循环嵌套时），记录到嵌套片与计算片的 summary 供需求模板生成
 /// "外层循环每次迭代中"的上下文。
-fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_loop_cond: Option<&str>) {
+fn plan_loop(
+    node: &Node,
+    content: &str,
+    blocks: &mut Vec<PlannedBlock>,
+    parent_loop_cond: Option<&str>,
+    depth: u32,
+    parent_id: Option<u32>,
+) {
     let mut summary = BlockSummary::default();
     summary.parent_loop_cond = parent_loop_cond.map(str::to_string);
     let body = node.child_by_field_name("body");
@@ -571,7 +635,11 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
     //    - 嵌套控制块 → 递归拆分
     enum Segment<'a> {
         Nested(Node<'a>),
-        Tail { start: u32, end: u32, nodes: Vec<Node<'a>> },
+        Tail {
+            start: u32,
+            end: u32,
+            nodes: Vec<Node<'a>>,
+        },
     }
     let mut segments: Vec<Segment> = Vec::new();
     let mut tail: Option<(u32, u32, Vec<Node>)> = None;
@@ -583,13 +651,21 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
                 "if_statement" | "for_statement" | "while_statement" | "do_statement"
                 | "switch_statement" => {
                     if let Some((s, e, nodes)) = tail.take() {
-                        segments.push(Segment::Tail { start: s, end: e, nodes });
+                        segments.push(Segment::Tail {
+                            start: s,
+                            end: e,
+                            nodes,
+                        });
                     }
                     segments.push(Segment::Nested(child));
                 }
                 k if k.starts_with("preproc_") => {
                     if let Some((s, e, nodes)) = tail.take() {
-                        segments.push(Segment::Tail { start: s, end: e, nodes });
+                        segments.push(Segment::Tail {
+                            start: s,
+                            end: e,
+                            nodes,
+                        });
                     }
                     segments.push(Segment::Nested(child));
                 }
@@ -610,29 +686,57 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
         }
     }
     if let Some((s, e, nodes)) = tail.take() {
-        segments.push(Segment::Tail { start: s, end: e, nodes });
+        segments.push(Segment::Tail {
+            start: s,
+            end: e,
+            nodes,
+        });
     }
 
     // 2) 循环片：仅循环头行（迭代控制独立成片，行为清单为空——循环体内的
-    //    直接语句与嵌套行为由各自的片覆盖，避免一条需求重复覆盖多个层级）
+    //    直接语句与嵌套行为由各自的片覆盖，避免一条需求重复覆盖多个层级）。
+    //    记录本循环头片的下标：体内各片的 parent_id 指向它，深度 +1。
     let self_cond = summary.loop_cond.clone();
+    let self_id = blocks.len() as u32;
     blocks.push(PlannedBlock {
         natural_start: header_line,
         natural_end: header_end,
         kind: SlicePlanKind::Loop,
         summary,
+        depth,
+        parent_id,
     });
 
     // 3) 嵌套块递归拆分 + 尾部直接语句组独立成片（带父循环上下文）；
-    //    子块的父循环上下文 = 本循环的条件（直接父级）
+    //    子片的父循环上下文 = 本循环的条件（直接父级），
+    //    parent_id = 本循环头片，深度 = 本循环 +1
     for seg in segments {
         match seg {
             Segment::Nested(n) => match n.kind() {
-                "if_statement" => plan_if_chain(&n, content, blocks, self_cond.as_deref()),
-                "for_statement" | "while_statement" | "do_statement" => {
-                    plan_loop(&n, content, blocks, self_cond.as_deref())
-                }
-                "switch_statement" => plan_switch(&n, content, blocks, self_cond.as_deref()),
+                "if_statement" => plan_if_chain(
+                    &n,
+                    content,
+                    blocks,
+                    self_cond.as_deref(),
+                    depth + 1,
+                    Some(self_id),
+                ),
+                "for_statement" | "while_statement" | "do_statement" => plan_loop(
+                    &n,
+                    content,
+                    blocks,
+                    self_cond.as_deref(),
+                    depth + 1,
+                    Some(self_id),
+                ),
+                "switch_statement" => plan_switch(
+                    &n,
+                    content,
+                    blocks,
+                    self_cond.as_deref(),
+                    depth + 1,
+                    Some(self_id),
+                ),
                 _ => {
                     // 条件编译块整体一片（同函数体顶层规则）
                     let mut s = BlockSummary::default();
@@ -644,6 +748,8 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
                         natural_end: n.end_position().row as u32 + 1,
                         kind: SlicePlanKind::Preproc,
                         summary: s,
+                        depth: depth + 1,
+                        parent_id: Some(self_id),
                     });
                 }
             },
@@ -658,6 +764,8 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
                     natural_end: end,
                     kind: SlicePlanKind::Computation,
                     summary: s,
+                    depth: depth + 1,
+                    parent_id: Some(self_id),
                 });
             }
         }
@@ -667,7 +775,14 @@ fn plan_loop(node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_
 /// 拆分 switch：每个 case / default 一片。switch 头行（含条件表达式，
 /// 是所有 case 需求的分派前提）归入首个 case 片；switch 的 '}' 收尾行
 /// 不归属任何片。switch 位于循环体内时 parent_loop_cond 携带外层循环条件。
-fn plan_switch(switch_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>, parent_loop_cond: Option<&str>) {
+fn plan_switch(
+    switch_node: &Node,
+    content: &str,
+    blocks: &mut Vec<PlannedBlock>,
+    parent_loop_cond: Option<&str>,
+    depth: u32,
+    parent_id: Option<u32>,
+) {
     let Some(body) = switch_node.child_by_field_name("body") else {
         return;
     };
@@ -697,6 +812,8 @@ fn plan_switch(switch_node: &Node, content: &str, blocks: &mut Vec<PlannedBlock>
                 natural_end: child.end_position().row as u32 + 1,
                 kind: SlicePlanKind::Case,
                 summary,
+                depth,
+                parent_id,
             });
             first = false;
         }
@@ -708,9 +825,7 @@ fn collect_behaviors(node: &Node, content: &str, out: &mut BlockSummary) {
     match node.kind() {
         "assignment_expression" => {
             let op = node.child_by_field_name("operator");
-            let is_plain = op
-                .map(|o| node_text(&o, content) == "=")
-                .unwrap_or(false);
+            let is_plain = op.map(|o| node_text(&o, content) == "=").unwrap_or(false);
             if is_plain {
                 if let (Some(l), Some(r)) = (
                     node.child_by_field_name("left"),
@@ -831,7 +946,11 @@ pub fn extract_lines(
     let lines: Vec<&str> = content.split('\n').collect();
     let total = lines.len() as i64;
     if start_line < 1 || end_line < start_line || end_line > total {
-        return Err(LineRangeError { start_line, end_line, total });
+        return Err(LineRangeError {
+            start_line,
+            end_line,
+            total,
+        });
     }
     let selected: Vec<String> = lines[(start_line - 1) as usize..end_line as usize]
         .iter()
@@ -858,7 +977,10 @@ mod tests {
         }
         // 未知值（空串/旧数据）回退 Computation
         assert_eq!(SlicePlanKind::from_code(""), SlicePlanKind::Computation);
-        assert_eq!(SlicePlanKind::from_code("unknown"), SlicePlanKind::Computation);
+        assert_eq!(
+            SlicePlanKind::from_code("unknown"),
+            SlicePlanKind::Computation
+        );
     }
 
     fn names(srcs: &[FunctionDef]) -> Vec<&str> {
@@ -883,11 +1005,21 @@ static int *foo(int a, char *b) {
         let funcs = parse_functions(src);
         assert_eq!(names(&funcs), vec!["add", "hello", "foo"]);
         for f in &funcs {
-            assert!(f.signature.contains(f.name.as_str()), "签名应含函数名: {}", f.signature);
+            assert!(
+                f.signature.contains(f.name.as_str()),
+                "签名应含函数名: {}",
+                f.signature
+            );
             assert!(f.signature.contains('('), "签名应含 '(': {}", f.signature);
-            assert!(!f.signature.contains('{'), "签名不应含函数体 '{{': {}", f.signature);
+            assert!(
+                !f.signature.contains('{'),
+                "签名不应含函数体 '{{': {}",
+                f.signature
+            );
         }
-        assert!(funcs[2].signature.contains("static int *foo(int a, char *b)"));
+        assert!(funcs[2]
+            .signature
+            .contains("static int *foo(int a, char *b)"));
     }
 
     #[test]
@@ -907,7 +1039,11 @@ static int *foo(int a,
         assert!(!sig.contains("return"), "签名不应含函数体内容: {}", sig);
         // 无首尾空白、无空行
         assert_eq!(sig.trim(), sig.as_str());
-        assert!(!sig.lines().any(|l| l.trim().is_empty()), "签名不应含空行: {}", sig);
+        assert!(
+            !sig.lines().any(|l| l.trim().is_empty()),
+            "签名不应含空行: {}",
+            sig
+        );
         // 多行签名被压缩为两行（去缩进、去行尾空白）
         assert_eq!(sig, "static int *foo(int a,\nchar *b)");
     }
@@ -918,7 +1054,11 @@ static int *foo(int a,
         let funcs = parse_functions(src);
         assert_eq!(names(&funcs), vec!["foo"]);
         let sig = &funcs[0].signature;
-        assert!(!sig.lines().any(|l| l.trim().is_empty()), "多余空行应被去除: {}", sig);
+        assert!(
+            !sig.lines().any(|l| l.trim().is_empty()),
+            "多余空行应被去除: {}",
+            sig
+        );
         assert_eq!(sig, "int foo(int a,\nint b)");
     }
 
@@ -1097,7 +1237,11 @@ int good(int x) {
 ";
         let funcs = parse_functions(src);
         // 语法错误的文件不 panic，且仍能识别出格式完好的函数
-        assert!(funcs.iter().any(|f| f.name == "good"), "应识别出 good: {:?}", names(&funcs));
+        assert!(
+            funcs.iter().any(|f| f.name == "good"),
+            "应识别出 good: {:?}",
+            names(&funcs)
+        );
         for f in &funcs {
             assert!(f.end_line >= f.start_line);
             assert!(f.signature.contains('('));
@@ -1139,7 +1283,8 @@ int good(int x) {
             "首片应起始于首个行为块的自然起始行"
         );
         assert_eq!(
-            items.last().unwrap().end_line, expected_last,
+            items.last().unwrap().end_line,
+            expected_last,
             "末片应止于末个行为块的自然结束行"
         );
         for w in items.windows(2) {
@@ -1178,15 +1323,47 @@ int good(int x) {
         // 精确行为边界：空行 L4/L8/L14/L18 不归属任何片（片间未覆盖行）
         let items = plan(src, "foo");
         assert_eq!(items.len(), 9, "9 个逻辑块: {items:?}");
-        assert_eq!(items[0], (2, 2, "computation"), "y 初始化声明独立成片: {items:?}");
-        assert_eq!(items[1], (3, 3, "computation"), "z 初始化声明独立成片: {items:?}");
-        assert_eq!(items[2], (5, 7, "branch"), "if 分支（前置空行不归属）: {items:?}");
+        assert_eq!(
+            items[0],
+            (2, 2, "computation"),
+            "y 初始化声明独立成片: {items:?}"
+        );
+        assert_eq!(
+            items[1],
+            (3, 3, "computation"),
+            "z 初始化声明独立成片: {items:?}"
+        );
+        assert_eq!(
+            items[2],
+            (5, 7, "branch"),
+            "if 分支（前置空行不归属）: {items:?}"
+        );
         assert_eq!(items[3], (9, 11, "branch"), "if 片: {items:?}");
-        assert_eq!(items[4], (12, 13, "branch"), "else 片（else 关键字行随 if 片）: {items:?}");
-        assert_eq!(items[5], (15, 15, "loop"), "for 头独立成片（{{ 与头同行无法避开）: {items:?}");
-        assert_eq!(items[6], (16, 16, "computation"), "循环体直接语句独立成计算片: {items:?}");
-        assert_eq!(items[7], (19, 19, "computation"), "数据准备组（y = y * z）: {items:?}");
-        assert_eq!(items[8], (20, 20, "computation"), "return 独立成片: {items:?}");
+        assert_eq!(
+            items[4],
+            (12, 13, "branch"),
+            "else 片（else 关键字行随 if 片）: {items:?}"
+        );
+        assert_eq!(
+            items[5],
+            (15, 15, "loop"),
+            "for 头独立成片（{{ 与头同行无法避开）: {items:?}"
+        );
+        assert_eq!(
+            items[6],
+            (16, 16, "computation"),
+            "循环体直接语句独立成计算片: {items:?}"
+        );
+        assert_eq!(
+            items[7],
+            (19, 19, "computation"),
+            "数据准备组（y = y * z）: {items:?}"
+        );
+        assert_eq!(
+            items[8],
+            (20, 20, "computation"),
+            "return 独立成片: {items:?}"
+        );
         assert_full_coverage(src, "foo", 2, 20);
     }
 
@@ -1197,7 +1374,11 @@ int good(int x) {
         let items = plan(src, "Core_ReadU32");
         assert_eq!(items.len(), 2, "应切成数据准备与返回结果两片: {items:?}");
         // 精确行为边界：纯声明行 L3 不归属任何片
-        assert_eq!(items[0], (4, 4, "computation"), "首片：仅 memcpy（纯声明行不归属）: {items:?}");
+        assert_eq!(
+            items[0],
+            (4, 4, "computation"),
+            "首片：仅 memcpy（纯声明行不归属）: {items:?}"
+        );
         assert_eq!(items[1], (5, 5, "computation"), "末片：return v: {items:?}");
         assert_full_coverage(src, "Core_ReadU32", 4, 5);
     }
@@ -1209,8 +1390,16 @@ int good(int x) {
         let items = plan(src, "f");
         assert_eq!(items.len(), 3, "{items:?}");
         assert_eq!(items[0], (2, 2, "computation"));
-        assert_eq!(items[1], (3, 3, "computation"), "return 独立成片: {items:?}");
-        assert_eq!(items[2], (4, 4, "computation"), "return 后语句归新组: {items:?}");
+        assert_eq!(
+            items[1],
+            (3, 3, "computation"),
+            "return 独立成片: {items:?}"
+        );
+        assert_eq!(
+            items[2],
+            (4, 4, "computation"),
+            "return 后语句归新组: {items:?}"
+        );
         assert_full_coverage(src, "f", 2, 4);
     }
 
@@ -1231,7 +1420,11 @@ int good(int x) {
         let items = plan(src, "grade");
         // if → else-if → else-if → else 共 4 片分支（首片从函数体首行开始，末片延伸到函数尾）
         assert_eq!(items.len(), 4, "else-if 链应逐分支拆分: {items:?}");
-        assert_eq!(items[0], (2, 4, "branch"), "if 片（else-if 行归 if 片）: {items:?}");
+        assert_eq!(
+            items[0],
+            (2, 4, "branch"),
+            "if 片（else-if 行归 if 片）: {items:?}"
+        );
         assert_eq!(items[1], (5, 6, "branch"), "第一个 else-if: {items:?}");
         assert_eq!(items[2], (7, 8, "branch"), "第二个 else-if: {items:?}");
         assert_eq!(items[3], (9, 10, "branch"), "else 片: {items:?}");
@@ -1258,10 +1451,18 @@ int good(int x) {
         let items = plan(src, "op");
         // case1 / case2 / default / 计算组（return）
         assert_eq!(items.len(), 4, "switch 每个 case 一片: {items:?}");
-        assert_eq!(items[0], (2, 5, "case"), "首片从函数体首行开始（含 switch 头，不含签名）: {items:?}");
+        assert_eq!(
+            items[0],
+            (2, 5, "case"),
+            "首片从函数体首行开始（含 switch 头，不含签名）: {items:?}"
+        );
         assert_eq!(items[1], (6, 8, "case"), "第二个 case: {items:?}");
         assert_eq!(items[2], (9, 11, "case"), "default: {items:?}");
-        assert_eq!(items[3], (13, 13, "computation"), "return（switch 收尾行 L12 不归属）: {items:?}");
+        assert_eq!(
+            items[3],
+            (13, 13, "computation"),
+            "return（switch 收尾行 L12 不归属）: {items:?}"
+        );
         assert_full_coverage(src, "op", 2, 13);
     }
 
@@ -1297,7 +1498,12 @@ int good(int x) {
         let expect = [
             (3u32, 3u32, "computation", "crc 初始化声明"),
             (6, 6, "loop", "外层循环头独立成片"),
-            (8, 8, "computation", "循环体直接语句 crc ^= data[i] 独立成计算片"),
+            (
+                8,
+                8,
+                "computation",
+                "循环体直接语句 crc ^= data[i] 独立成计算片",
+            ),
             (9, 9, "loop", "内层循环头独立成片"),
             (11, 14, "branch", "if 分支"),
             (15, 18, "branch", "else 分支"),
@@ -1305,7 +1511,11 @@ int good(int x) {
         ];
         for (i, (s, e, k, msg)) in expect.iter().enumerate() {
             assert_eq!(
-                (items[i].start_line, items[i].end_line, items[i].kind.as_str()),
+                (
+                    items[i].start_line,
+                    items[i].end_line,
+                    items[i].kind.as_str()
+                ),
                 (*s, *e, *k),
                 "{msg}: {items:?}"
             );
@@ -1347,7 +1557,11 @@ int good(int x) {
         ];
         for (i, (s, e, k, msg)) in expect.iter().enumerate() {
             assert_eq!(
-                (items[i].start_line, items[i].end_line, items[i].kind.as_str()),
+                (
+                    items[i].start_line,
+                    items[i].end_line,
+                    items[i].kind.as_str()
+                ),
                 (*s, *e, *k),
                 "{msg}: {items:?}"
             );
@@ -1369,12 +1583,20 @@ int good(int x) {
         let items = plan_items(src, "f");
         assert_eq!(items.len(), 2, "{items:?}");
         assert_eq!(
-            (items[0].start_line, items[0].end_line, items[0].kind.as_str()),
+            (
+                items[0].start_line,
+                items[0].end_line,
+                items[0].kind.as_str()
+            ),
             (2, 4, "loop"),
             "循环片覆盖多行头的全部行: {items:?}"
         );
         assert_eq!(
-            (items[1].start_line, items[1].end_line, items[1].kind.as_str()),
+            (
+                items[1].start_line,
+                items[1].end_line,
+                items[1].kind.as_str()
+            ),
             (6, 6, "computation"),
             "体语句独立成计算片: {items:?}"
         );
@@ -1385,7 +1607,11 @@ int good(int x) {
         // 多层嵌套循环：每层独立成片（最内层含直接语句）
         let src = "void t(int n) {\n    for (int a = 0; a < n; a++)\n    {\n        for (int b = 0; b < n; b++)\n        {\n            for (int c = 0; c < n; c++)\n            {\n                work(a, b, c);\n            }\n        }\n    }\n}\n";
         let items = plan_items(src, "t");
-        assert_eq!(items.len(), 4, "三层循环头各一片 + 最内层语句计算片: {items:?}");
+        assert_eq!(
+            items.len(),
+            4,
+            "三层循环头各一片 + 最内层语句计算片: {items:?}"
+        );
         let expect = [
             (2u32, 2u32, "loop", "外层"),
             (4, 4, "loop", "中层"),
@@ -1394,7 +1620,11 @@ int good(int x) {
         ];
         for (i, (s, e, k, msg)) in expect.iter().enumerate() {
             assert_eq!(
-                (items[i].start_line, items[i].end_line, items[i].kind.as_str()),
+                (
+                    items[i].start_line,
+                    items[i].end_line,
+                    items[i].kind.as_str()
+                ),
                 (*s, *e, *k),
                 "{msg}: {items:?}"
             );
@@ -1438,8 +1668,16 @@ int good(int x) {
         let items = plan(src, "f");
         assert_eq!(items.len(), 3, "{items:?}");
         // 精确行为边界：纯声明行 L2 不归属任何片，初始化声明 L3 独立成片
-        assert_eq!(items[0], (3, 3, "computation"), "初始化声明独立成片: {items:?}");
-        assert_eq!(items[1], (4, 4, "computation"), "计算组 a = b + x: {items:?}");
+        assert_eq!(
+            items[0],
+            (3, 3, "computation"),
+            "初始化声明独立成片: {items:?}"
+        );
+        assert_eq!(
+            items[1],
+            (4, 4, "computation"),
+            "计算组 a = b + x: {items:?}"
+        );
         assert_eq!(items[2], (5, 5, "computation"), "return 末片: {items:?}");
         assert_full_coverage(src, "f", 3, 5);
 
@@ -1474,7 +1712,10 @@ int good(int x) {
     #[test]
     fn plan_not_found_when_range_mismatch() {
         let src = "int foo(void) {\n    return 1;\n}\n";
-        assert!(plan_function_slices(src, 1, 99).is_none(), "行范围不匹配应返回 None");
+        assert!(
+            plan_function_slices(src, 1, 99).is_none(),
+            "行范围不匹配应返回 None"
+        );
         assert!(plan_function_slices("", 1, 1).is_none(), "空内容返回 None");
     }
 
@@ -1484,7 +1725,11 @@ int good(int x) {
         let src = "int f(int x) {\n    /* 校验输入 */\n    if (x < 0) {\n        return -1;\n    }\n    return x;\n}\n";
         let items = plan(src, "f");
         assert_eq!(items.len(), 2, "{items:?}");
-        assert_eq!(items[0], (3, 5, "branch"), "注释行 L2 不归属 if 片: {items:?}");
+        assert_eq!(
+            items[0],
+            (3, 5, "branch"),
+            "注释行 L2 不归属 if 片: {items:?}"
+        );
         assert_eq!(items[1], (6, 6, "computation"));
         assert_full_coverage(src, "f", 3, 6);
     }
@@ -1516,5 +1761,77 @@ int good(int x) {
         let err = extract_lines(src, 1, 5).unwrap_err();
         assert_eq!(err.total, 4);
         assert!(err.to_string().contains("L1-L5"));
+    }
+
+    // -----------------------------------------------------------------
+    // 切片关系：id / parent_id / depth（深度优先森林，父先于子）
+    // -----------------------------------------------------------------
+
+    /// 不变量：id 连续且等于输出下标；父片必先于子片出现；
+    /// 子片深度 = 父片深度 + 1；顶层片深度为 0
+    fn assert_forest_invariants(items: &[SlicePlanItem]) {
+        for (i, item) in items.iter().enumerate() {
+            assert_eq!(item.id as usize, i, "id 应等于输出下标: {item:?}");
+            match item.parent_id {
+                Some(p) => {
+                    let parent = &items[p as usize];
+                    assert!(
+                        parent.start_line < item.start_line,
+                        "父片(#{p})应先于子片出现: {item:?}"
+                    );
+                    assert_eq!(item.depth, parent.depth + 1, "子片深度应为父片+1: {item:?}");
+                }
+                None => assert_eq!(item.depth, 0, "顶层片深度应为 0: {item:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn plan_reports_depth_and_parent() {
+        // 外层循环内嵌套内层循环与 if/else（CRC32 用例）
+        let src = "static uint32_t Crc32(const uint8_t* data, uint32_t len)\n{\n    uint32_t crc = 0xFFFFFFFFu;\n    uint32_t i;\n    for (i = 0u; i < len; i++)\n    {\n        crc ^= (uint32_t)data[i];\n        for (k = 0; k < 8; k++)\n        {\n            if ((crc & 1u) != 0u)\n            {\n                crc = (crc >> 1) ^ 0xEDB88320u;\n            }\n            else\n            {\n                crc >>= 1;\n            }\n        }\n    }\n    return ~crc;\n}\n";
+        let items = plan_items(src, "Crc32");
+        assert_forest_invariants(&items);
+        let expect = [
+            (0u32, None, 0u32), // crc 初始化（顶层）
+            (1, None, 0),       // 外层循环头（顶层）
+            (2, Some(1), 1),    // crc ^= ...：外层循环体直接语句
+            (3, Some(1), 1),    // 内层循环头（外层循环体内）
+            (4, Some(3), 2),    // if 分支（内层循环体内）
+            (5, Some(3), 2),    // else 分支
+            (6, None, 0),       // return（顶层）
+        ];
+        for (i, (id, pid, depth)) in expect.iter().enumerate() {
+            assert_eq!(
+                (items[i].id, items[i].parent_id, items[i].depth),
+                (*id, *pid, *depth),
+                "第 {i} 片树位置不符: {items:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_switch_cases_are_children_of_enclosing_loop() {
+        let src = "int f(int n) {\n    for (int i = 0; i < n; i++)\n    {\n        switch (i) {\n        case 0:\n            work(0);\n            break;\n        default:\n            work(1);\n            break;\n        }\n    }\n}\n";
+        let items = plan_items(src, "f");
+        assert_eq!(items.len(), 3, "{items:?}");
+        assert_forest_invariants(&items);
+        assert_eq!(items[0].kind.as_str(), "loop");
+        for it in &items[1..] {
+            assert_eq!(it.kind.as_str(), "case");
+            assert_eq!(it.parent_id, Some(0), "case 片应指向循环头: {it:?}");
+            assert_eq!(it.depth, 1);
+        }
+    }
+
+    #[test]
+    fn plan_top_level_branches_have_no_parent() {
+        let src = "int g(int s) {\n    if (s > 0) {\n        return 1;\n    } else {\n        return 0;\n    }\n}\n";
+        let items = plan_items(src, "g");
+        assert_forest_invariants(&items);
+        for it in &items {
+            assert_eq!(it.parent_id, None, "顶层分支不应有父片: {it:?}");
+            assert_eq!(it.depth, 0);
+        }
     }
 }

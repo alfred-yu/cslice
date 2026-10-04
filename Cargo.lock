@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "cslice-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tree-sitter",
  "tree-sitter-c",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "cslice-py"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "cslice-core",
  "pyo3",

@@ -111,6 +111,46 @@ def test_plan_summary_loop_and_parent_cond():
     assert items[1].summary.behaviors == []
     assert items[1].summary.loop_cond == "i < len"
 
+    # 树关系：id 连续、父片先于子片、深度从外到内递增
+    assert [i.id for i in items] == list(range(7))
+    assert (items[0].parent_id, items[0].depth) == (None, 0)
+    assert (items[1].parent_id, items[1].depth) == (None, 0)
+    assert (items[2].parent_id, items[2].depth) == (1, 1)  # 循环体直接语句 → 外层循环
+    assert (items[3].parent_id, items[3].depth) == (1, 1)  # 内层循环头 → 外层循环
+    assert (items[4].parent_id, items[4].depth) == (3, 2)  # if → 内层循环
+    assert (items[5].parent_id, items[5].depth) == (3, 2)  # else → 内层循环
+    assert (items[6].parent_id, items[6].depth) == (None, 0)  # return 顶层
+    for item in items:  # 通用不变量
+        if item.parent_id is not None:
+            parent = items[item.parent_id]
+            assert parent.start_line < item.start_line
+            assert item.depth == parent.depth + 1
+
+
+def test_plan_switch_cases_are_children_of_enclosing_loop():
+    src = (
+        "int f(int n) {\n"
+        "    for (int i = 0; i < n; i++)\n"
+        "    {\n"
+        "        switch (i) {\n"
+        "        case 0:\n"
+        "            work(0);\n"
+        "            break;\n"
+        "        default:\n"
+        "            work(1);\n"
+        "            break;\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+    )
+    items = cslice.plan_function_slices(src, 1, 13)
+    assert items is not None and len(items) == 3
+    assert items[0].kind == "loop"
+    for item in items[1:]:
+        assert item.kind == "case"
+        assert item.parent_id == 0
+        assert item.depth == 1
+
 
 def test_plan_switch():
     src = (

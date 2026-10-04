@@ -1,6 +1,6 @@
 [package]
 name = "cslice-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "C 函数逻辑块切分引擎：tree-sitter AST 切分 + 行范围代码快照（无状态纯函数）"
 edition = "2021"
 license = "MIT"
