@@ -29,8 +29,10 @@ python-source = "python"
 module-name = "cslice._native"
 manifest-path = "crates/cslice-py/Cargo.toml"
 features = ["pyo3/extension-module", "pyo3/abi3-py38"]
-# Windows 产物附带调试符号，不进 wheel
+# Windows 产物附带调试符号，不进 wheel；LICENSE 必须随 sdist 分发
+# （元数据声明了 License-File，sdist 缺文件会被 PyPI 400 拒收）
 exclude = [{ path = "**/*.pdb", format = "wheel" }]
+include = [{ path = "LICENSE", format = "sdist" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
