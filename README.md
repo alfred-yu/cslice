@@ -1,5 +1,9 @@
 # cslice — AST-based logical-block slicing for C functions
 
+[![CI](https://github.com/alfred-yu/cslice/actions/workflows/ci.yml/badge.svg)](https://github.com/alfred-yu/cslice/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/cslice)](https://pypi.org/project/cslice/)
+[![Python](https://img.shields.io/pypi/pyversions/cslice)](https://pypi.org/project/cslice/)
+
 **English** | [中文](https://github.com/alfred-yu/cslice/blob/main/README.zh-CN.md)
 
 `cslice` parses C source code with [tree-sitter](https://tree-sitter.github.io/)
@@ -155,7 +159,13 @@ Example output for `int y = 0;` inside `calc`:
 Slices inside nested loops carry their execution context: the draft for a
 statement inside `for (i = 0; i < len; i++)` is prefixed with
 "在该循环（i < len）的每次迭代中，…" / "In each iteration of the loop where
-i < len holds, …".
+i < len holds, …". Guard conditions (`guard_conds`) are rendered as the
+outermost prefix — "When !(p == 0 || n <= 0), in each iteration …".
+
+Drafts can be checked for compliance with
+`cslice.drafts.lint_requirement(description, verify_method, func_name)` —
+sentence style ("应"/"shall"), function-name subject, ambiguous words, empty
+verify method and clause-count heuristics (`lint_summarize` counts by level).
 
 No LLM, no network: `cslice.drafts` never makes external calls; AI-based
 enhancement belongs to the caller.

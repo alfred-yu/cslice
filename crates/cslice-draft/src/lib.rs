@@ -16,6 +16,7 @@
 
 use cslice_core::{Behavior, BlockSummary, SlicePlanItem, SlicePlanKind};
 
+pub mod lint;
 pub mod templates;
 
 /// 需求草稿：描述/验证方法两要素。
@@ -29,18 +30,38 @@ pub struct ReqDraft {
 
 /// 对单个切片计划项生成需求草稿。
 ///
-/// 循环体嵌套拆分产生的片（内层循环/循环内分支/尾部计算片）的
-/// `summary.parent_loop_cond` 携带直接父循环条件，描述加入
-/// "（外层）循环每次迭代中"上下文，保证需求在其执行语境下无歧义。
+/// - 循环体嵌套拆分产生的片（内层循环/循环内分支/尾部计算片）的
+///   `summary.parent_loop_cond` 携带直接父循环条件，描述加入
+///   "（外层）循环每次迭代中"上下文，保证需求在其执行语境下无歧义；
+/// - `item.guard_conds` 携带执行前置守卫条件（卫语句放行条件，按序累积），
+///   合取为 `!(a) && !(b)` 形式的单一条件，以 "当 … 时，"/"When …, " 前缀
+///   置于最外层——卫语句未放行则执行流到达不了本片，先于循环语境。
 pub fn generate_draft(func_name: &str, item: &SlicePlanItem, language: &str) -> ReqDraft {
-    generate_from_parts(
+    let draft = generate_from_parts(
         func_name,
         item.kind,
         &item.summary,
         item.start_line,
         item.end_line,
         language,
-    )
+    );
+    with_guard_context(draft, &item.guard_conds, language)
+}
+
+/// 守卫条件前缀：合取为单一条件后复用 frame.cond_prefix 句式，置于最外层
+fn with_guard_context(draft: ReqDraft, guards: &[String], language: &str) -> ReqDraft {
+    if guards.is_empty() {
+        return draft;
+    }
+    let cond = guards.join(" && ");
+    let prefix = templates::render(
+        templates::lookup(language, "frame.cond_prefix"),
+        &[("condition", cond.as_str())],
+    );
+    ReqDraft {
+        description: join_prefixed(&prefix, draft.description, language == "en"),
+        verify_method: draft.verify_method,
+    }
 }
 
 /// 兜底草稿：语义提取失败（空函数体/无法解析的行为）时使用。
@@ -482,6 +503,13 @@ mod tests {
         draft_for_lang(src, func, idx, "zh")
     }
 
+    /// 目标函数的完整切片计划项列表（守卫条件测试用）
+    fn plan_items_all(src: &str, func: &str) -> Vec<cslice_core::SlicePlanItem> {
+        let funcs = cslice_core::parse_functions(src);
+        let f = funcs.iter().find(|f| f.name == func).expect("函数应存在");
+        cslice_core::plan_function_slices(src, f.start_line, f.end_line).expect("应生成计划")
+    }
+
     #[test]
     fn branch_single_return() {
         let src = "int foo(int x) {\n    int y = 0;\n    if (x < 0) {\n        return -1;\n    }\n    y = x;\n    return y;\n}\n";
@@ -616,6 +644,72 @@ mod tests {
         assert_eq!(d.description, "函数 Core_ReadU32 应调用函数 memcpy。");
         let d = draft_for(reader, "Core_ReadU32", 1);
         assert_eq!(d.description, "函数 Core_ReadU32 应返回 v。");
+    }
+
+    #[test]
+    fn guard_condition_prefixes_description() {
+        // 守卫语句后的循环片：草稿以取反守卫条件前缀置顶
+        let src = "int f(const int* p, int n) {
+    int s = 0;
+    if (p == 0 || n <= 0) {
+        return -1;
+    }
+    for (int i = 0; i < n; i++)
+    {
+        s += p[i];
+    }
+    return s;
+}
+";
+        let items = plan_items_all(src, "f");
+        // 片序：0 s 初始化（守卫前，无守卫）/ 1 卫语句自身 / 2 循环头 / 3 循环体 / 4 return
+        assert!(items[0].guard_conds.is_empty());
+        assert!(items[1].guard_conds.is_empty());
+        let d = generate_draft("f", &items[2], "zh");
+        assert_eq!(
+            d.description,
+            "当 !(p == 0 || n <= 0) 时，函数 f 应在满足 i < n 的条件下重复执行循环迭代（循环控制：int i = 0；i < n；i++）。",
+            "{}",
+            d.description
+        );
+        let d_en = generate_draft("f", &items[2], "en");
+        assert!(
+            d_en.description
+                .starts_with("When !(p == 0 || n <= 0), the f function shall iterate"),
+            "{}",
+            d_en.description
+        );
+        // 守卫之后的循环体计算片：守卫前缀在最外层，循环语境在其内
+        let body = generate_draft("f", &items[3], "zh");
+        assert_eq!(
+            body.description,
+            "当 !(p == 0 || n <= 0) 时，在该循环（i < n）的每次迭代中，函数 f 应执行 s += p[i]。",
+            "{}",
+            body.description
+        );
+    }
+
+    #[test]
+    fn guard_conditions_accumulate_in_draft() {
+        let src = "int f(int a, int b) {
+    if (a == 0) {
+        return 1;
+    }
+    if (b == 0) {
+        return 2;
+    }
+    return work(a, b);
+}
+";
+        let items = plan_items_all(src, "f");
+        // return 片累积两个守卫条件，合取为单一条件表达式
+        let d = generate_draft("f", &items[2], "zh");
+        assert!(
+            d.description
+                .starts_with("当 !(a == 0) && !(b == 0) 时，函数 f 应返回 work(a, b)"),
+            "{}",
+            d.description
+        );
     }
 
     #[test]

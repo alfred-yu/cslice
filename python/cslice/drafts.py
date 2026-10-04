@@ -6,18 +6,30 @@
 
 这是面向需求工程场景的附加能力——只需要代码切分的用户可完全忽略本模块。
 本模块不包含任何 LLM/网络能力；AI 增强属调用方。
+
+草稿会自动携带执行语境：切片的守卫条件（guard_conds）以"当 … 时，"/
+"When …, " 前缀置于最外层（先于循环语境）；lint_requirement 对草稿做
+合规检查（句式/主语/歧义词/原子性启发），仅产生警告与提示。
 """
 
 from cslice._native import (
+    LintIssue,
+    LintSummary,
     ReqDraft,
     draft_fallback_draft as fallback_draft,
     draft_generate_draft as generate_draft,
     draft_generate_drafts as generate_drafts,
+    draft_lint_requirement as lint_requirement,
+    draft_lint_summarize as lint_summarize,
 )
 
 __all__ = [
+    "LintIssue",
+    "LintSummary",
     "ReqDraft",
     "fallback_draft",
     "generate_draft",
     "generate_drafts",
+    "lint_requirement",
+    "lint_summarize",
 ]

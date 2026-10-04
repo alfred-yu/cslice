@@ -1,5 +1,9 @@
 # cslice — C 函数 AST 逻辑块切分
 
+[![CI](https://github.com/alfred-yu/cslice/actions/workflows/ci.yml/badge.svg)](https://github.com/alfred-yu/cslice/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/cslice)](https://pypi.org/project/cslice/)
+[![Python](https://img.shields.io/pypi/pyversions/cslice)](https://pypi.org/project/cslice/)
+
 [English](https://github.com/alfred-yu/cslice/blob/main/README.md) | **中文**
 
 `cslice` 基于 [tree-sitter](https://tree-sitter.github.io/) 解析 C 源码，把每个函数体切分为**逻辑块**——构成函数行为的原子单元：分支、循环、case、连续简单语句、条件编译块。每个切片携带行范围、块类型、代码文本与语义摘要（条件表达式、循环控制、赋值/调用/返回），可直接用于代码理解、审查清单、覆盖映射、静态分析工具、文档生成等场景。
@@ -113,7 +117,9 @@ drafts = generate_drafts(funcs[0].name, items)                      # 批量
 - 默认（英文）：`The calc function shall initialize y to 0.`（验证方法：`Test`）
 - 中文（`language="zh"`）：`函数 calc 应将 y 初始化为 0。`（验证方法：`测试`）
 
-嵌套循环内的切片自动携带执行语境：`for (i = 0; i < len; i++)` 内语句的草稿以"在该循环（i < len）的每次迭代中，…"（英文 "In each iteration of the loop where i < len holds, …"）为前缀。
+嵌套循环内的切片自动携带执行语境：`for (i = 0; i < len; i++)` 内语句的草稿以"在该循环（i < len）的每次迭代中，…"（英文 "In each iteration of the loop where i < len holds, …"）为前缀。守卫条件（`guard_conds`）以最外层前缀体现——"当 !(p == 0) 时，" / "When !(p == 0), "。
+
+草稿可用 `cslice.drafts.lint_requirement(description, verify_method, func_name)` 做合规检查——"应/shall"句式、函数名主语、歧义词、空验证方法与分句数启发（`lint_summarize` 按级别计数）。
 
 不含 LLM、无网络调用：AI 增强属调用方职责。
 

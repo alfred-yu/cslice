@@ -193,8 +193,6 @@ pub struct BlockSummary {
     pub parent_loop_cond: Option<String>,
     /// 行为清单（赋值/初始化/return/调用/跳转，按源码顺序）
     pub behaviors: Vec<Behavior>,
-    /// 行为语句总数
-    pub behavior_count: u32,
 }
 
 /// 自动切片计划项（1-based 行范围，含端点）。

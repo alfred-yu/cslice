@@ -366,6 +366,61 @@ impl PyReqDraft {
     }
 }
 
+/// 单条 lint 检查结果：warning（应修复）| info（供参考）。
+#[pyclass(get_all, skip_from_py_object, name = "LintIssue")]
+#[derive(Clone)]
+struct PyLintIssue {
+    /// "warning" | "info"
+    level: String,
+    message: String,
+}
+
+impl From<draft::lint::LintIssue> for PyLintIssue {
+    fn from(i: draft::lint::LintIssue) -> Self {
+        Self {
+            level: i.level,
+            message: i.message,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLintIssue {
+    fn __repr__(&self) -> String {
+        format!(
+            "cslice.LintIssue(level={:?}, message={:?})",
+            self.level, self.message
+        )
+    }
+}
+
+/// lint 检查结果汇总。
+#[pyclass(get_all, skip_from_py_object, name = "LintSummary")]
+#[derive(Clone)]
+struct PyLintSummary {
+    warning_count: u32,
+    info_count: u32,
+}
+
+impl From<draft::lint::LintSummary> for PyLintSummary {
+    fn from(s: draft::lint::LintSummary) -> Self {
+        Self {
+            warning_count: s.warning_count,
+            info_count: s.info_count,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLintSummary {
+    fn __repr__(&self) -> String {
+        format!(
+            "cslice.LintSummary(warning_count={}, info_count={})",
+            self.warning_count, self.info_count
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 入口函数
 // ---------------------------------------------------------------------------
@@ -478,6 +533,35 @@ fn draft_generate_drafts(
         .collect()
 }
 
+/// 对需求描述与验证方法做合规检查（纯函数 lint）：
+/// 空描述、"应/shall"句式、函数名主语、歧义词、空验证方法、原子性启发。
+/// func_name 为需求关联切片所属函数名（未关联传 None，跳过主语检查）。
+#[pyfunction]
+#[pyo3(signature = (description, verify_method, func_name=None))]
+fn draft_lint_requirement(
+    description: &str,
+    verify_method: &str,
+    func_name: Option<&str>,
+) -> Vec<PyLintIssue> {
+    draft::lint::lint_requirement(description, verify_method, func_name)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// 汇总 lint 检查结果（按级别计数）。
+#[pyfunction]
+fn draft_lint_summarize(issues: Vec<PyRef<'_, PyLintIssue>>) -> PyLintSummary {
+    let owned: Vec<draft::lint::LintIssue> = issues
+        .iter()
+        .map(|i| draft::lint::LintIssue {
+            level: i.level.clone(),
+            message: i.message.clone(),
+        })
+        .collect();
+    draft::lint::summarize(&owned).into()
+}
+
 /// cslice：C 函数逻辑块切分引擎（基于 tree-sitter）。
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -500,5 +584,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(draft_generate_draft, m)?)?;
     m.add_function(wrap_pyfunction!(draft_fallback_draft, m)?)?;
     m.add_function(wrap_pyfunction!(draft_generate_drafts, m)?)?;
+    m.add_class::<PyLintIssue>()?;
+    m.add_class::<PyLintSummary>()?;
+    m.add_function(wrap_pyfunction!(draft_lint_requirement, m)?)?;
+    m.add_function(wrap_pyfunction!(draft_lint_summarize, m)?)?;
     Ok(())
 }
