@@ -1,6 +1,6 @@
 [package]
 name = "cslice-py"
-version = "0.3.0"
+version = "0.1.4"
 description = "cslice Python 扩展模块（PyO3 绑定，maturin 构建）"
 edition = "2021"
 license = "MIT"
