@@ -93,15 +93,15 @@ from cslice.drafts import generate_draft, generate_drafts
 funcs = cslice.parse_functions(source)
 items = cslice.plan_function_slices(source, funcs[0].start_line, funcs[0].end_line)
 
-draft = generate_draft(funcs[0].name, items[0])                     # 中文（默认）
-draft_en = generate_draft(funcs[0].name, items[0], language="en")
+draft = generate_draft(funcs[0].name, items[0])                     # 英文（默认）
+draft_zh = generate_draft(funcs[0].name, items[0], language="zh")
 drafts = generate_drafts(funcs[0].name, items)                      # 批量
 ```
 
 `calc` 函数中 `int y = 0;` 的输出示例：
 
-- 中文：`函数 calc 应将 y 初始化为 0。`（验证方法：`测试`）
-- 英文：`The calc function shall initialize y to 0.`（验证方法：`Test`）
+- 默认（英文）：`The calc function shall initialize y to 0.`（验证方法：`Test`）
+- 中文（`language="zh"`）：`函数 calc 应将 y 初始化为 0。`（验证方法：`测试`）
 
 嵌套循环内的切片自动携带执行语境：`for (i = 0; i < len; i++)` 内语句的草稿以"在该循环（i < len）的每次迭代中，…"（英文 "In each iteration of the loop where i < len holds, …"）为前缀。
 

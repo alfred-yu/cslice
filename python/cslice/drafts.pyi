@@ -15,15 +15,15 @@ class ReqDraft:
 
 
 def generate_draft(
-    func_name: str, item: SlicePlanItem, language: str = "zh"
+    func_name: str, item: SlicePlanItem, language: str = "en"
 ) -> ReqDraft:
     """从单个切片计划项生成需求草稿（模板路径，离线确定）。
-    language："zh" 中文"应"句式 / "en" 英文 shall 句式，其他值按中文处理。"""
+    language 默认 "en"（英文 shall 句式）；传 "zh" 得中文"应"句式，其他值按中文处理。"""
     ...
 
 
 def fallback_draft(
-    func_name: str, kind: str, start_line: int, end_line: int, language: str = "zh"
+    func_name: str, kind: str, start_line: int, end_line: int, language: str = "en"
 ) -> ReqDraft:
     """兜底草稿：语义提取失败（空函数体/无法解析的行为）时使用。
     kind 传切片类型字符串，未知值按核心口径回退为 computation。"""
@@ -31,7 +31,7 @@ def fallback_draft(
 
 
 def generate_drafts(
-    func_name: str, items: List[SlicePlanItem], language: str = "zh"
+    func_name: str, items: List[SlicePlanItem], language: str = "en"
 ) -> List[ReqDraft]:
     """批量：对同一函数的多个切片计划项生成草稿（按列表顺序）。"""
     ...

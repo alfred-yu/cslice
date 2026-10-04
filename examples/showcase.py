@@ -6,6 +6,7 @@
 from pathlib import Path
 
 import cslice
+from cslice.drafts import generate_drafts
 
 SRC = Path(__file__).with_name("all_in_one.c")
 
@@ -63,6 +64,12 @@ def show(plan: "cslice.FunctionPlan", source: str) -> None:
             f"片#{item.id:<2} (深度{item.depth}, {parent}) "
             f"L{item.start_line}-L{item.end_line} [{item.kind}] {'  '.join(facts)}"
         )
+
+    # 切片需求草稿（cslice.drafts，默认英文 shall 句式；language="zh" 得中文句式）
+    print("\n—— 切片需求草稿（默认 en）——")
+    for item, d in zip(plan.items, generate_drafts(f.name, plan.items)):
+        indent = "│   " * item.depth
+        print(f"{indent}#{item.id:<2} [{d.verify_method}] {d.description}")
 
 
 if __name__ == "__main__":

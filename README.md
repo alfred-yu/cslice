@@ -122,15 +122,15 @@ from cslice.drafts import generate_draft, generate_drafts
 funcs = cslice.parse_functions(source)
 items = cslice.plan_function_slices(source, funcs[0].start_line, funcs[0].end_line)
 
-draft = generate_draft(funcs[0].name, items[0])                     # zh (default)
-draft_en = generate_draft(funcs[0].name, items[0], language="en")
+draft = generate_draft(funcs[0].name, items[0])                     # en (default)
+draft_zh = generate_draft(funcs[0].name, items[0], language="zh")
 drafts = generate_drafts(funcs[0].name, items)                      # batch
 ```
 
 Example output for `int y = 0;` inside `calc`:
 
-- zh: `函数 calc 应将 y 初始化为 0。`（verify method: `测试`）
-- en: `The calc function shall initialize y to 0.`（verify method: `Test`）
+- en (default): `The calc function shall initialize y to 0.` (verify method: `Test`)
+- zh (`language="zh"`): `函数 calc 应将 y 初始化为 0。` (verify method: `测试`)
 
 Slices inside nested loops carry their execution context: the draft for a
 statement inside `for (i = 0; i < len; i++)` is prefixed with

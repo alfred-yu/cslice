@@ -350,9 +350,9 @@ const KINDS: [&str; 5] = ["computation", "branch", "loop", "case", "preproc"];
 // ---------------------------------------------------------------------------
 
 /// 从单个切片计划项生成需求草稿（模板路径，离线确定）。
-/// language："zh" 中文"应"句式 / "en" 英文 shall 句式，其他值按中文处理。
+/// language：默认 "en" 英文 shall 句式；传 "zh" 得中文"应"句式，其他值按中文处理。
 #[pyfunction]
-#[pyo3(signature = (func_name, item, language = "zh"))]
+#[pyo3(signature = (func_name, item, language = "en"))]
 fn draft_generate_draft(func_name: &str, item: &PySlicePlanItem, language: &str) -> PyReqDraft {
     draft::generate_draft(func_name, &item.core_item, language).into()
 }
@@ -360,7 +360,7 @@ fn draft_generate_draft(func_name: &str, item: &PySlicePlanItem, language: &str)
 /// 兜底草稿：语义提取失败（空函数体/无法解析的行为）时使用。
 /// kind 传切片类型字符串，未知值按核心口径回退为 computation。
 #[pyfunction]
-#[pyo3(signature = (func_name, kind, start_line, end_line, language = "zh"))]
+#[pyo3(signature = (func_name, kind, start_line, end_line, language = "en"))]
 fn draft_fallback_draft(
     func_name: &str,
     kind: &str,
@@ -380,7 +380,7 @@ fn draft_fallback_draft(
 
 /// 批量：对同一函数的多个切片计划项生成草稿（按列表顺序）。
 #[pyfunction]
-#[pyo3(signature = (func_name, items, language = "zh"))]
+#[pyo3(signature = (func_name, items, language = "en"))]
 fn draft_generate_drafts(
     func_name: &str,
     items: Vec<PyRef<'_, PySlicePlanItem>>,
