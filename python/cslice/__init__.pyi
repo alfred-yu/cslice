@@ -60,6 +60,7 @@ class SlicePlanItem:
     id: int  # 函数内序号（0-based，等于列表下标）
     parent_id: Optional[int]  # 包裹本片的循环头片 id；顶层片为 None
     depth: int  # 嵌套深度：函数体顶层 0，进入循环体 +1
+    guard_conds: List[str]  # 执行前置守卫条件（卫语句放行条件，按序累积）
     start_line: int  # 1-based（含）
     end_line: int  # 1-based（含）
     kind: SliceKind
@@ -97,4 +98,42 @@ def extract_lines(source: str, start_line: int, end_line: int) -> str:
 
 def slice_all(source: str) -> List[FunctionPlan]:
     """一次性切分源码中的全部函数，每片附带 code_text。"""
+    ...
+
+
+# ---------------------------------------------------------------------------
+# 控制流图（CFG）
+# ---------------------------------------------------------------------------
+
+class CfgNode:
+    """CFG 节点：基本块与控制结构，带"做什么"语义标签（非源码原文）。"""
+
+    id: int
+    kind: Literal[
+        "entry", "exit", "block", "branch", "loop", "switch", "case", "return", "join"
+    ]
+    label: str  # 条件表达式 / "返回 x" / "调用 f()" 等
+    start_line: int  # 1-based（含）
+    end_line: int  # 1-based（含）
+
+
+class CfgEdge:
+    """CFG 有向边（src → dst）：label 携带条件/事件语义，style 为视觉分类。
+    属性名用 src/dst 而非 from/to——from 是 Python 关键字。"""
+
+    src: int
+    dst: int
+    label: Optional[str]  # 是/否/直落/循环/break/continue/退出/case 值
+    style: str  # "seq" 顺序流 / "false" 条件不成立 / "back" 回边或跳出
+
+
+class CfgGraph:
+    """单个函数的控制流图。"""
+
+    nodes: List[CfgNode]
+    edges: List[CfgEdge]
+
+
+def build_cfg(source: str, start_line: int, end_line: int) -> Optional[CfgGraph]:
+    """生成函数控制流图（1-based 起止行定位函数）；找不到返回 None。"""
     ...

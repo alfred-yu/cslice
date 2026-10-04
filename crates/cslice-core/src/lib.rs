@@ -203,7 +203,8 @@ pub struct BlockSummary {
 /// 父片必先于子片出现（从顶向下、从外到内）。
 /// - `depth`：嵌套深度，函数体顶层为 0，进入循环体 +1；
 /// - `parent_id`：包裹本片的循环头片 id（循环体内的直接语句片与
-///   嵌套控制流片指向该循环）；顶层片为 [`None`]。
+///   嵌套控制流片指向该循环）；顶层片为 [`None`]；
+/// - `guard_conds`：执行前置守卫条件（见字段文档）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlicePlanItem {
     /// 函数内序号（0-based，等于其在输出列表中的下标）
@@ -212,6 +213,16 @@ pub struct SlicePlanItem {
     pub parent_id: Option<u32>,
     /// 嵌套深度：顶层 0，循环体内递归 +1
     pub depth: u32,
+    /// 执行前置守卫条件（按序累积）。
+    ///
+    /// 同作用域内位于本片**之前**的卫语句——真/假侧之一恒提前退出
+    /// （return / break / continue，由 CFG 判定该侧永不落到 if 的汇合点）——
+    /// 其放行条件是本片行为发生的前提：真侧恒退出 → `!(cond)`（假侧放行），
+    /// 假侧恒退出 → `cond`（真侧放行）。循环体内的片同时继承外层与
+    /// 循环体作用域的守卫；空列表 = 无守卫前提。
+    /// 注意这是**必要**执行前提而非完整路径条件（else-if 深层条件、
+    /// 循环 break 对后续迭代的影响等不计入）。
+    pub guard_conds: Vec<String>,
     pub start_line: u32,
     pub end_line: u32,
     pub kind: SlicePlanKind,
@@ -228,7 +239,8 @@ pub fn plan_function_slices(
     let mut parser = new_parser()?;
     let tree = parser.parse(content, None)?;
     let node = find_function_by_range(&tree.root_node(), func_start_line, func_end_line)?;
-    Some(collect_slice_plan(&node, content))
+    let graph = build_function_cfg(&node, content);
+    Some(collect_slice_plan(&node, content, &graph))
 }
 
 /// 按 1-based 起止行精确匹配 function_definition 节点
@@ -269,7 +281,7 @@ pub(crate) fn find_function_by_range<'a>(
 /// （DO-178C 原子性——嵌套控制流是不同层级行为，不得用一条需求覆盖），
 /// 嵌套片与体内直接语句计算片的 summary.parent_loop_cond 携带直接父循环条件。
 /// 切分的同时从 AST 提取各块的语义摘要（BlockSummary）。
-fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
+fn collect_slice_plan(func: &Node, content: &str, cfg: &CfgGraph) -> Vec<SlicePlanItem> {
     let func_start = func.start_position().row as u32 + 1;
     let func_end = func.end_position().row as u32 + 1;
     let Some(body) = func.child_by_field_name("body") else {
@@ -277,6 +289,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             id: 0,
             parent_id: None,
             depth: 0,
+            guard_conds: Vec::new(),
             start_line: func_start,
             end_line: func_end,
             kind: SlicePlanKind::Computation,
@@ -326,6 +339,9 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     let mut blocks: Vec<PlannedBlock> = Vec::new();
     // 计算组：连续简单语句/声明，聚合子节点后统一提取行为
     let mut group: Option<(u32, u32, Vec<Node>)> = None;
+    // 守卫条件：同作用域内位于本片之前的卫语句（真/假侧恒提前退出的 if），
+    // 其放行条件是后续片行为发生的前提（CFG 判定，见 cfg::guard_condition）
+    let mut guards: Vec<String> = Vec::new();
 
     for i in 0..body.child_count() {
         let Some(child) = body.child(i) else { continue };
@@ -333,19 +349,23 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             // 大括号与注释跳过：注释行由无缝拼接吸收进下一片（注释描述其后的代码）
             "{" | "}" | "comment" => {}
             "if_statement" => {
-                flush_group(&mut group, &mut blocks, content);
-                plan_if_chain(&child, content, &mut blocks, None, 0, None);
+                flush_group(&mut group, &mut blocks, content, &guards);
+                plan_if_chain(&child, content, &mut blocks, None, 0, None, &guards);
+                // 卫语句检测在切片生成之后：守卫自身的片不带本守卫条件
+                if let Some(cond) = guard_cond_of(cfg, &child) {
+                    guards.push(cond);
+                }
             }
             "for_statement" | "while_statement" | "do_statement" => {
-                flush_group(&mut group, &mut blocks, content);
-                plan_loop(&child, content, &mut blocks, None, 0, None);
+                flush_group(&mut group, &mut blocks, content, &guards);
+                plan_loop(&child, content, &mut blocks, None, 0, None, &guards, cfg);
             }
             "switch_statement" => {
-                flush_group(&mut group, &mut blocks, content);
-                plan_switch(&child, content, &mut blocks, None, 0, None);
+                flush_group(&mut group, &mut blocks, content, &guards);
+                plan_switch(&child, content, &mut blocks, None, 0, None, &guards);
             }
             k if k.starts_with("preproc_") => {
-                flush_group(&mut group, &mut blocks, content);
+                flush_group(&mut group, &mut blocks, content, &guards);
                 let mut summary = BlockSummary::default();
                 summary.preproc_directive = first_line_text(&child, content);
                 collect_behaviors(&child, content, &mut summary);
@@ -356,12 +376,13 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                     summary,
                     depth: 0,
                     parent_id: None,
+                    guards: guards.clone(),
                 });
             }
             "return_statement" => {
                 // 顶层 return 独立成片：结束当前计算组（数据准备归前片），
                 // return（返回结果）单独一片。其后语句（不可达代码）归新组。
-                flush_group(&mut group, &mut blocks, content);
+                flush_group(&mut group, &mut blocks, content, &guards);
                 let mut summary = BlockSummary::default();
                 collect_behaviors(&child, content, &mut summary);
                 blocks.push(PlannedBlock {
@@ -371,6 +392,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                     summary,
                     depth: 0,
                     parent_id: None,
+                    guards: guards.clone(),
                 });
             }
             "declaration" => {
@@ -386,7 +408,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                         .unwrap_or(false)
                 });
                 if has_init {
-                    flush_group(&mut group, &mut blocks, content);
+                    flush_group(&mut group, &mut blocks, content, &guards);
                     let mut summary = BlockSummary::default();
                     collect_behaviors(&child, content, &mut summary);
                     blocks.push(PlannedBlock {
@@ -396,6 +418,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
                         summary,
                         depth: 0,
                         parent_id: None,
+                        guards: guards.clone(),
                     });
                 }
             }
@@ -413,7 +436,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             }
         }
     }
-    flush_group(&mut group, &mut blocks, content);
+    flush_group(&mut group, &mut blocks, content, &guards);
 
     // 2) 精确行为边界：每片行范围 = 逻辑块的自然行范围；仅当相邻块自然
     //    范围重叠时（如 else 关键字行同时是 if 分支体的结束行）将后片
@@ -430,6 +453,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             id: id as u32,
             parent_id: block.parent_id,
             depth: block.depth,
+            guard_conds: block.guards,
             start_line: start,
             end_line: end,
             kind: block.kind,
@@ -446,6 +470,7 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
             id: 0,
             parent_id: None,
             depth: 0,
+            guard_conds: Vec::new(),
             start_line: base.min(end),
             end_line: end,
             kind: SlicePlanKind::Computation,
@@ -455,7 +480,17 @@ fn collect_slice_plan(func: &Node, content: &str) -> Vec<SlicePlanItem> {
     result
 }
 
-/// 切分中的中间结构：自然行范围 + 块类型 + 语义摘要 + 树位置
+/// 若该 if 是卫语句（真/假侧之一恒提前退出、永不落到本 if 的汇合点），
+/// 返回其后同作用域切片的执行条件：真侧恒退出 → `!(cond)`（假侧放行）；
+/// 假侧恒退出 → `cond`（真侧放行）。判定基于 CFG 可达性，见 [`cfg::guard_condition`]。
+fn guard_cond_of(cfg: &CfgGraph, if_node: &Node) -> Option<String> {
+    let s = if_node.start_position().row as u32 + 1;
+    let e = if_node.end_position().row as u32 + 1;
+    let (branch_id, join_id) = if_branch_join(cfg, s, e)?;
+    guard_condition(cfg, branch_id, join_id)
+}
+
+/// 切分中的中间结构：自然行范围 + 块类型 + 语义摘要 + 树位置 + 守卫上下文
 struct PlannedBlock {
     natural_start: u32,
     natural_end: u32,
@@ -465,14 +500,17 @@ struct PlannedBlock {
     depth: u32,
     /// 包裹本片的循环头片在 blocks 中的下标；顶层为 None
     parent_id: Option<u32>,
+    /// 执行前置守卫条件（外层继承 + 本作用域累积）
+    guards: Vec<String>,
 }
 
 /// 将当前累积的简单语句组作为一个计算片输出（聚合子节点行为）。
-/// 仅用于函数体顶层聚合：切片恒为深度 0、无父片。
+/// 仅用于函数体顶层聚合：切片恒为深度 0、无父片，守卫为当前累积值。
 fn flush_group(
     group: &mut Option<(u32, u32, Vec<Node>)>,
     blocks: &mut Vec<PlannedBlock>,
     content: &str,
+    guards: &[String],
 ) {
     if let Some((s, e, nodes)) = group.take() {
         let mut summary = BlockSummary::default();
@@ -486,13 +524,15 @@ fn flush_group(
             summary,
             depth: 0,
             parent_id: None,
+            guards: guards.to_vec(),
         });
     }
 }
 
 /// 拆分 if / else-if / else 链：每个分支一片（含条件与完整分支体）。
 /// 嵌套在分支体内部的 if 不拆（随所属分支成片）；分支位于循环体内时
-/// parent_loop_cond 携带外层循环条件（需求上下文）。
+/// parent_loop_cond 携带外层循环条件（需求上下文）。guards 为该 if 位置
+/// 的守卫条件上下文（本链各分支片继承之）。
 fn plan_if_chain(
     if_node: &Node,
     content: &str,
@@ -500,6 +540,7 @@ fn plan_if_chain(
     parent_loop_cond: Option<&str>,
     depth: u32,
     parent_id: Option<u32>,
+    guards: &[String],
 ) {
     // 首个 if 片：语句头（含条件）到 consequence 结束
     let start = if_node.start_position().row as u32 + 1;
@@ -522,6 +563,7 @@ fn plan_if_chain(
         summary,
         depth,
         parent_id,
+        guards: guards.to_vec(),
     });
 
     // 沿 else_clause 链逐分支拆分；alternative 内部语句无字段名
@@ -550,6 +592,7 @@ fn plan_if_chain(
                     summary,
                     depth,
                     parent_id,
+                    guards: guards.to_vec(),
                 });
                 current = inner;
             }
@@ -566,6 +609,7 @@ fn plan_if_chain(
                     summary,
                     depth,
                     parent_id,
+                    guards: guards.to_vec(),
                 });
                 return;
             }
@@ -581,7 +625,9 @@ fn plan_if_chain(
 /// 子处理 vs 条件分支），不得用一条需求覆盖。循环收尾 `}` 行（do-while 的
 /// `while (cond);` 条件行）不归属任何片。parent_loop_cond 为外层循环条件
 /// （循环嵌套时），记录到嵌套片与计算片的 summary 供需求模板生成
-/// "外层循环每次迭代中"的上下文。
+/// "外层循环每次迭代中"的上下文。guards 为该循环位置的守卫条件上下文：
+/// 循环头片继承之；体内各片继承之并叠加体内位于其前的守卫（守卫作用域
+/// 在循环体边界重置，不影响循环之后的代码）。
 fn plan_loop(
     node: &Node,
     content: &str,
@@ -589,6 +635,8 @@ fn plan_loop(
     parent_loop_cond: Option<&str>,
     depth: u32,
     parent_id: Option<u32>,
+    guards: &[String],
+    cfg: &CfgGraph,
 ) {
     let mut summary = BlockSummary::default();
     summary.parent_loop_cond = parent_loop_cond.map(str::to_string);
@@ -633,16 +681,26 @@ fn plan_loop(
     // 1) 分类循环体直接子节点（保持源码顺序）：
     //    - 直接语句组（首个嵌套块前/嵌套块之间/之后）→ 独立计算片
     //    - 嵌套控制块 → 递归拆分
+    //    同时做体内守卫扫描：位于片段之前的卫语句条件并入该片段的
+    //    守卫上下文（外层继承 + 体内累积）。体内 if 是否为卫语句由 CFG 判定。
     enum Segment<'a> {
-        Nested(Node<'a>),
+        Nested(Node<'a>, Vec<String>),
         Tail {
             start: u32,
             end: u32,
             nodes: Vec<Node<'a>>,
+            guards: Vec<String>,
         },
     }
     let mut segments: Vec<Segment> = Vec::new();
     let mut tail: Option<(u32, u32, Vec<Node>)> = None;
+    let mut body_guards: Vec<String> = Vec::new();
+    // 当前时刻的守卫上下文 = 外层继承 + 体内已累积
+    let mut snapshot = |body_guards: &[String]| -> Vec<String> {
+        let mut g = guards.to_vec();
+        g.extend(body_guards.iter().cloned());
+        g
+    };
     if let Some(b) = body {
         for i in 0..b.child_count() {
             let Some(child) = b.child(i) else { continue };
@@ -655,9 +713,16 @@ fn plan_loop(
                             start: s,
                             end: e,
                             nodes,
+                            guards: snapshot(&body_guards),
                         });
                     }
-                    segments.push(Segment::Nested(child));
+                    segments.push(Segment::Nested(child, snapshot(&body_guards)));
+                    // 卫语句检测在片段生成之后：守卫自身的片不带本守卫条件
+                    if child.kind() == "if_statement" {
+                        if let Some(cond) = guard_cond_of(cfg, &child) {
+                            body_guards.push(cond);
+                        }
+                    }
                 }
                 k if k.starts_with("preproc_") => {
                     if let Some((s, e, nodes)) = tail.take() {
@@ -665,9 +730,10 @@ fn plan_loop(
                             start: s,
                             end: e,
                             nodes,
+                            guards: snapshot(&body_guards),
                         });
                     }
-                    segments.push(Segment::Nested(child));
+                    segments.push(Segment::Nested(child, snapshot(&body_guards)));
                 }
                 _ => {
                     let e = child.end_position().row as u32 + 1;
@@ -690,12 +756,14 @@ fn plan_loop(
             start: s,
             end: e,
             nodes,
+            guards: snapshot(&body_guards),
         });
     }
 
     // 2) 循环片：仅循环头行（迭代控制独立成片，行为清单为空——循环体内的
     //    直接语句与嵌套行为由各自的片覆盖，避免一条需求重复覆盖多个层级）。
     //    记录本循环头片的下标：体内各片的 parent_id 指向它，深度 +1。
+    //    循环头片继承外层守卫（体内守卫不影响头片——守卫在体内、头在前）。
     let self_cond = summary.loop_cond.clone();
     let self_id = blocks.len() as u32;
     blocks.push(PlannedBlock {
@@ -705,14 +773,15 @@ fn plan_loop(
         summary,
         depth,
         parent_id,
+        guards: guards.to_vec(),
     });
 
     // 3) 嵌套块递归拆分 + 尾部直接语句组独立成片（带父循环上下文）；
     //    子片的父循环上下文 = 本循环的条件（直接父级），
-    //    parent_id = 本循环头片，深度 = 本循环 +1
+    //    parent_id = 本循环头片，深度 = 本循环 +1，守卫 = 分类期快照
     for seg in segments {
         match seg {
-            Segment::Nested(n) => match n.kind() {
+            Segment::Nested(n, seg_guards) => match n.kind() {
                 "if_statement" => plan_if_chain(
                     &n,
                     content,
@@ -720,6 +789,7 @@ fn plan_loop(
                     self_cond.as_deref(),
                     depth + 1,
                     Some(self_id),
+                    &seg_guards,
                 ),
                 "for_statement" | "while_statement" | "do_statement" => plan_loop(
                     &n,
@@ -728,6 +798,8 @@ fn plan_loop(
                     self_cond.as_deref(),
                     depth + 1,
                     Some(self_id),
+                    &seg_guards,
+                    cfg,
                 ),
                 "switch_statement" => plan_switch(
                     &n,
@@ -736,6 +808,7 @@ fn plan_loop(
                     self_cond.as_deref(),
                     depth + 1,
                     Some(self_id),
+                    &seg_guards,
                 ),
                 _ => {
                     // 条件编译块整体一片（同函数体顶层规则）
@@ -750,10 +823,16 @@ fn plan_loop(
                         summary: s,
                         depth: depth + 1,
                         parent_id: Some(self_id),
+                        guards: seg_guards,
                     });
                 }
             },
-            Segment::Tail { start, end, nodes } => {
+            Segment::Tail {
+                start,
+                end,
+                nodes,
+                guards: seg_guards,
+            } => {
                 let mut s = BlockSummary::default();
                 s.parent_loop_cond = self_cond.clone();
                 for n in &nodes {
@@ -766,6 +845,7 @@ fn plan_loop(
                     summary: s,
                     depth: depth + 1,
                     parent_id: Some(self_id),
+                    guards: seg_guards,
                 });
             }
         }
@@ -782,6 +862,7 @@ fn plan_switch(
     parent_loop_cond: Option<&str>,
     depth: u32,
     parent_id: Option<u32>,
+    guards: &[String],
 ) {
     let Some(body) = switch_node.child_by_field_name("body") else {
         return;
@@ -814,6 +895,7 @@ fn plan_switch(
                 summary,
                 depth,
                 parent_id,
+                guards: guards.to_vec(),
             });
             first = false;
         }
@@ -958,6 +1040,11 @@ pub fn extract_lines(
         .collect();
     Ok(selected.join("\n"))
 }
+
+/// 控制流图（CFG）提取：基本块、分支真假边、循环回边、switch 直落，
+/// 以及基于 CFG 可达性的卫语句判定（见 [`cfg::guard_condition`]）。
+pub mod cfg;
+pub use cfg::*;
 
 #[cfg(test)]
 mod tests {
@@ -1822,6 +1909,172 @@ int good(int x) {
             assert_eq!(it.parent_id, Some(0), "case 片应指向循环头: {it:?}");
             assert_eq!(it.depth, 1);
         }
+    }
+
+    // -----------------------------------------------------------------
+    // 守卫条件（guard_conds）：CFG 判定 + 作用域累积 + 向下传播
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn plan_guard_clause_guards_following_slices() {
+        // 经典卫语句：if 内 return，其后所有顶层片（含循环及其体内片）携带取反条件
+        let src = "int f(const int* p, int n) {
+    int s = 0;
+    if (p == 0 || n <= 0) {
+        log(\"bad\");
+        return -1;
+    }
+    for (int i = 0; i < n; i++)
+    {
+        s += p[i];
+    }
+    return s;
+}
+";
+        let items = plan_items(src, "f");
+        assert_forest_invariants(&items);
+        let guard = vec!["!(p == 0 || n <= 0)".to_string()];
+        // 守卫自身的分支片不带本守卫条件
+        assert_eq!(items[1].kind.as_str(), "branch");
+        assert_eq!(items[1].guard_conds, Vec::<String>::new());
+        // 其后：循环头、体内计算片、return 全部携带
+        assert_eq!(items[2].guard_conds, guard, "{items:?}");
+        assert_eq!(items[3].guard_conds, guard, "{items:?}");
+        assert_eq!(items[4].guard_conds, guard, "{items:?}");
+    }
+
+    #[test]
+    fn plan_guards_accumulate_in_order() {
+        let src = "int f(int a, int b) {
+    if (a == 0) {
+        return 1;
+    }
+    if (b == 0) {
+        return 2;
+    }
+    return work(a, b);
+}
+";
+        let items = plan_items(src, "f");
+        // 片序：0 第一个卫语句 / 1 第二个卫语句（带前一守卫条件）/ 2 return（累积两个）
+        assert_eq!(items[0].guard_conds, Vec::<String>::new(), "{items:?}");
+        assert_eq!(
+            items[1].guard_conds,
+            vec!["!(a == 0)".to_string()],
+            "{items:?}"
+        );
+        assert_eq!(
+            items[2].guard_conds,
+            vec!["!(a == 0)".to_string(), "!(b == 0)".to_string()],
+            "{items:?}"
+        );
+    }
+
+    #[test]
+    fn plan_conditional_return_is_not_guard() {
+        // 真侧存在放行路径（仅 d 成立才 return）→ 非卫语句
+        let src = "int f(int c, int d) {
+    if (c) {
+        if (d) {
+            return 1;
+        }
+    }
+    return 0;
+}
+";
+        let items = plan_items(src, "f");
+        assert!(items.iter().all(|i| i.guard_conds.is_empty()), "{items:?}");
+    }
+
+    #[test]
+    fn plan_if_without_return_is_not_guard() {
+        let src = "int f(int c) {
+    int y = 0;
+    if (c) {
+        y = 1;
+    }
+    return y;
+}
+";
+        let items = plan_items(src, "f");
+        assert!(items.iter().all(|i| i.guard_conds.is_empty()), "{items:?}");
+    }
+
+    #[test]
+    fn plan_guard_inside_loop_scopes_to_body() {
+        // 体内卫语句（continue）：体内其后片段携带；循环之后的代码不携带
+        let src = "int f(int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++)
+    {
+        if (i % 2 == 0) {
+            continue;
+        }
+        s += i;
+    }
+    return s;
+}
+";
+        let items = plan_items(src, "f");
+        // 片序：0 s 初始化 / 1 for 头 / 2 if（体内守卫）/ 3 s += i / 4 return
+        assert_eq!(items.len(), 5, "{items:?}");
+        assert!(
+            items[1].guard_conds.is_empty(),
+            "循环头在守卫之前: {items:?}"
+        );
+        assert!(
+            items[2].guard_conds.is_empty(),
+            "守卫自身的片不带: {items:?}"
+        );
+        assert_eq!(
+            items[3].guard_conds,
+            vec!["!(i % 2 == 0)".to_string()],
+            "{items:?}"
+        );
+        assert!(
+            items[4].guard_conds.is_empty(),
+            "守卫不越出循环体: {items:?}"
+        );
+    }
+
+    #[test]
+    fn plan_guard_inherited_through_nested_loops() {
+        let src = "int f(const int* p, int n) {
+    if (p == 0) {
+        return -1;
+    }
+    for (int i = 0; i < n; i++)
+    {
+        for (int j = 0; j < 4; j++)
+        {
+            work(i, j);
+        }
+    }
+    return 0;
+}
+";
+        let items = plan_items(src, "f");
+        let guard = vec!["!(p == 0)".to_string()];
+        for (i, item) in items.iter().enumerate().skip(1) {
+            assert_eq!(item.guard_conds, guard, "片{i}应继承顶层守卫: {items:?}");
+        }
+    }
+
+    #[test]
+    fn plan_else_return_guard_is_positive_condition() {
+        // 假侧恒退出（else return）→ 后续片的执行条件是正向的真侧条件
+        let src = "int f(int c) {
+    if (c) {
+        work();
+    } else {
+        return -1;
+    }
+    return 0;
+}
+";
+        let items = plan_items(src, "f");
+        // 片序：0 if 分支 / 1 else 分支 / 2 return
+        assert_eq!(items[2].guard_conds, vec!["c".to_string()], "{items:?}");
     }
 
     #[test]

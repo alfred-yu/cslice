@@ -92,6 +92,26 @@ a parent slice always appears before all of its children, so
 `items[item.parent_id]` and an indentation by `depth` reconstruct the
 containment tree directly.
 
+Slices also carry **execution preconditions**: `guard_conds` lists the
+(accumulated, negated) conditions of preceding *guard clauses* — an `if`
+whose one side always exits early (return / break / continue, verified on the
+built-in control-flow graph). After
+
+```c
+if (p == 0 || n <= 0) { log("bad"); return -1; }
+```
+
+every following slice in the same scope carries `["!(p == 0 || n <= 0)"]`
+(and slices inside subsequent loops inherit it); a guard whose *else* side
+always exits yields the positive condition instead. Guards accumulate in
+order, are scoped to their statement scope (they never cross a loop-body
+boundary), and are **necessary** preconditions — not full path conditions.
+
+The CFG itself is exposed too: `cslice.build_cfg(source, start_line, end_line)`
+returns a `CfgGraph` (nodes with semantic labels — conditions, "返回 x",
+"调用 f()" — and edges labelled 是/否/直落/循环/break/continue/退出 with a
+`style` classification).
+
 ## Slicing rules
 
 - **Exact behavior boundaries**: signature lines, braces, comments and bare

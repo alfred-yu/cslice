@@ -59,6 +59,8 @@ def show(plan: "cslice.FunctionPlan", source: str) -> None:
             facts.append(f"指令={s.preproc_directive}")
         if s.behaviors:
             facts.append("行为=[" + ",".join(b.kind for b in s.behaviors) + "]")
+        if item.guard_conds:
+            facts.append("守卫=[" + " && ".join(item.guard_conds) + "]")
         parent = f"父片=#{item.parent_id}" if item.parent_id is not None else "顶层"
         print(
             f"片#{item.id:<2} (深度{item.depth}, {parent}) "

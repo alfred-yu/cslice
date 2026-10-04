@@ -193,6 +193,9 @@ struct PySlicePlanItem {
     /// 嵌套深度：函数体顶层为 0，进入循环体 +1
     #[pyo3(get)]
     depth: u32,
+    /// 执行前置守卫条件（按序累积；卫语句未放行则执行流到不了本片）
+    #[pyo3(get)]
+    guard_conds: Vec<String>,
     /// 1-based 起始行（含）
     #[pyo3(get)]
     start_line: u32,
@@ -220,6 +223,7 @@ impl PySlicePlanItem {
             id: item.id,
             parent_id: item.parent_id,
             depth: item.depth,
+            guard_conds: item.guard_conds.clone(),
             start_line: item.start_line,
             end_line: item.end_line,
             kind: item.kind.as_str().to_string(),
@@ -248,6 +252,88 @@ struct PyFunctionPlan {
     function: PyFunctionDef,
     /// 切片计划（按行有序）；个别函数计划失败时为空
     items: Vec<PySlicePlanItem>,
+}
+
+// ---------------------------------------------------------------------------
+// 控制流图（CFG）
+// ---------------------------------------------------------------------------
+
+/// CFG 节点：基本块 / 分支 / 循环 / case / return / 汇合点等，
+/// 带 1-based 行范围（定位源码用）与"做什么"语义标签（非源码原文）。
+#[pyclass(get_all, skip_from_py_object, name = "CfgNode")]
+#[derive(Clone)]
+struct PyCfgNode {
+    /// 节点 id
+    id: u32,
+    /// "entry" | "exit" | "block" | "branch" | "loop" | "switch" | "case" | "return" | "join"
+    kind: String,
+    /// 语义标签（条件表达式 / "返回 x" / "调用 f()" 等）
+    label: String,
+    /// 1-based 起始行（含）
+    start_line: u32,
+    /// 1-based 结束行（含）
+    end_line: u32,
+}
+
+impl From<core::CfgNode> for PyCfgNode {
+    fn from(n: core::CfgNode) -> Self {
+        Self {
+            id: n.id,
+            kind: n.kind.as_str().to_string(),
+            label: n.label,
+            start_line: n.start_line,
+            end_line: n.end_line,
+        }
+    }
+}
+
+/// CFG 有向边（src → dst）：label 携带条件/事件语义（是/否/直落/循环/break/continue/退出/case 值），
+/// style 为视觉分类（"seq" 顺序流 / "false" 条件不成立 / "back" 回边或跳出）。
+/// 属性名用 src/dst 而非 from/to——`from` 是 Python 关键字。
+#[pyclass(get_all, skip_from_py_object, name = "CfgEdge")]
+#[derive(Clone)]
+struct PyCfgEdge {
+    src: u32,
+    dst: u32,
+    label: Option<String>,
+    style: String,
+}
+
+impl From<core::CfgEdge> for PyCfgEdge {
+    fn from(e: core::CfgEdge) -> Self {
+        // Python 属性名用 src/dst：`from` 是关键字，无法用点号访问
+        Self {
+            src: e.from,
+            dst: e.to,
+            label: e.label,
+            style: e.style.to_string(),
+        }
+    }
+}
+
+/// 单个函数的控制流图。
+#[pyclass(get_all, skip_from_py_object, name = "CfgGraph")]
+#[derive(Clone)]
+struct PyCfgGraph {
+    nodes: Vec<PyCfgNode>,
+    edges: Vec<PyCfgEdge>,
+}
+
+impl From<core::CfgGraph> for PyCfgGraph {
+    fn from(g: core::CfgGraph) -> Self {
+        Self {
+            nodes: g.nodes.into_iter().map(Into::into).collect(),
+            edges: g.edges.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// 生成函数控制流图（CFG）。按 1-based 起止行定位函数；找不到返回 None。
+/// 节点 = 基本块与控制结构（if / 循环 / switch / case / return / 汇合点），
+/// 边标签携带条件与事件语义（"是"/"否"/"直落"/"循环"/"break"/"continue"/"退出"）。
+#[pyfunction]
+fn build_cfg(source: &str, start_line: u32, end_line: u32) -> Option<PyCfgGraph> {
+    core::build_cfg(source, start_line, end_line).map(Into::into)
 }
 
 /// 需求草稿：描述/验证方法两要素（cslice.drafts 可选能力）。
@@ -406,6 +492,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(slice_all, m)?)?;
     m.add("KINDS", PyTuple::new(m.py(), KINDS)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_class::<PyCfgNode>()?;
+    m.add_class::<PyCfgEdge>()?;
+    m.add_class::<PyCfgGraph>()?;
+    m.add_function(wrap_pyfunction!(build_cfg, m)?)?;
     m.add_class::<PyReqDraft>()?;
     m.add_function(wrap_pyfunction!(draft_generate_draft, m)?)?;
     m.add_function(wrap_pyfunction!(draft_fallback_draft, m)?)?;

@@ -234,3 +234,73 @@ def test_syntax_error_tolerance():
     assert "good" in [f.name for f in funcs]
     for f in funcs:
         assert f.end_line >= f.start_line
+
+
+def test_guard_conds_top_level_return_guard():
+    src = (
+        "int f(const int* p, int n) {\n"
+        "    int s = 0;\n"
+        "    if (p == 0 || n <= 0) {\n"
+        '        log("bad");\n'
+        "        return -1;\n"
+        "    }\n"
+        "    for (int i = 0; i < n; i++)\n"
+        "    {\n"
+        "        s += p[i];\n"
+        "    }\n"
+        "    return s;\n"
+        "}\n"
+    )
+    items = cslice.plan_function_slices(src, 1, 12)
+    assert items is not None
+    guard = ["!(p == 0 || n <= 0)"]
+    # 守卫自身的分支片不带本守卫；其后所有片（含循环体）携带
+    assert items[1].guard_conds == []
+    for item in items[2:]:
+        assert item.guard_conds == guard, f"#{item.id}: {item.guard_conds}"
+
+
+def test_guard_scopes_to_loop_body():
+    src = (
+        "int f(int n) {\n"
+        "    int s = 0;\n"
+        "    for (int i = 0; i < n; i++)\n"
+        "    {\n"
+        "        if (i % 2 == 0) {\n"
+        "            continue;\n"
+        "        }\n"
+        "        s += i;\n"
+        "    }\n"
+        "    return s;\n"
+        "}\n"
+    )
+    items = cslice.plan_function_slices(src, 1, 11)
+    assert items is not None and len(items) == 5
+    assert items[1].guard_conds == []  # 循环头在守卫之前
+    assert items[2].guard_conds == []  # 守卫自身的片不带
+    assert items[3].guard_conds == ["!(i % 2 == 0)"]  # 体内其后片段携带
+    assert items[4].guard_conds == []  # 守卫不越出循环体
+
+
+def test_build_cfg():
+    src = (
+        "int f(int c) {\n"
+        "    if (c) {\n"
+        "        work();\n"
+        "    } else {\n"
+        "        return -1;\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+    )
+    g = cslice.build_cfg(src, 1, 8)
+    assert g is not None
+    kinds = [n.kind for n in g.nodes]
+    assert "entry" in kinds and "exit" in kinds and "branch" in kinds and "join" in kinds
+    branch = next(n for n in g.nodes if n.kind == "branch")
+    assert branch.label == "c"
+    assert branch.start_line == 2
+    # else 内 return 被识别为 return 节点（而非不透明 Block），这是守卫判定的基础
+    ret = next(n for n in g.nodes if n.kind == "return")
+    assert any(e.src == ret.id for e in g.edges)
+    assert cslice.build_cfg(src, 1, 99) is None
