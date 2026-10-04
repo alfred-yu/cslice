@@ -1,0 +1,9 @@
+[package]
+name = "cslice-draft"
+version = "0.3.0"
+description = "cslice 可选领域能力：从切片生成模板化需求草稿（离线确定性，中英双语）"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+cslice-core = { path = "../cslice-core" }

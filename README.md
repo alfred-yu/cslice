@@ -105,6 +105,41 @@ containment tree directly.
   (nothing to describe).
 - Empty bodies and unparseable functions degrade to a single fallback slice.
 
+## Draft generation (optional)
+
+`cslice.drafts` adds requirement-draft generation on top of slicing — an
+optional, domain-oriented capability (requirement engineering for C code);
+users who only need slicing can ignore it entirely.
+
+It is fully offline and deterministic: each slice is turned into a
+template-based draft sentence (Chinese "应" style or English "shall" style),
+with a verify method inferred from the slice kind (conditional compilation →
+review, all others → test).
+
+```python
+from cslice.drafts import generate_draft, generate_drafts
+
+funcs = cslice.parse_functions(source)
+items = cslice.plan_function_slices(source, funcs[0].start_line, funcs[0].end_line)
+
+draft = generate_draft(funcs[0].name, items[0])                     # zh (default)
+draft_en = generate_draft(funcs[0].name, items[0], language="en")
+drafts = generate_drafts(funcs[0].name, items)                      # batch
+```
+
+Example output for `int y = 0;` inside `calc`:
+
+- zh: `函数 calc 应将 y 初始化为 0。`（verify method: `测试`）
+- en: `The calc function shall initialize y to 0.`（verify method: `Test`）
+
+Slices inside nested loops carry their execution context: the draft for a
+statement inside `for (i = 0; i < len; i++)` is prefixed with
+"在该循环（i < len）的每次迭代中，…" / "In each iteration of the loop where
+i < len holds, …".
+
+No LLM, no network: `cslice.drafts` never makes external calls; AI-based
+enhancement belongs to the caller.
+
 ## License
 
 MIT

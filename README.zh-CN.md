@@ -81,6 +81,32 @@ Crc32 L1-L21 [static uint32_t Crc32(...)]
 - 带初始化的声明独立成片；纯声明跳过（无行为可描述）。
 - 空函数体与无法解析的函数退化为单个兜底切片。
 
+## 需求草稿生成（可选）
+
+`cslice.drafts` 在切分之上提供需求草稿生成——面向需求工程场景的可选能力，只需要代码切分的用户可完全忽略本模块。
+
+完全离线、确定性：每个切片经内置模板生成一条草稿句（中文"应"句式 / 英文 shall 句式），验证方法按切片类型推断（条件编译 → 审查，其余 → 测试）。
+
+```python
+from cslice.drafts import generate_draft, generate_drafts
+
+funcs = cslice.parse_functions(source)
+items = cslice.plan_function_slices(source, funcs[0].start_line, funcs[0].end_line)
+
+draft = generate_draft(funcs[0].name, items[0])                     # 中文（默认）
+draft_en = generate_draft(funcs[0].name, items[0], language="en")
+drafts = generate_drafts(funcs[0].name, items)                      # 批量
+```
+
+`calc` 函数中 `int y = 0;` 的输出示例：
+
+- 中文：`函数 calc 应将 y 初始化为 0。`（验证方法：`测试`）
+- 英文：`The calc function shall initialize y to 0.`（验证方法：`Test`）
+
+嵌套循环内的切片自动携带执行语境：`for (i = 0; i < len; i++)` 内语句的草稿以"在该循环（i < len）的每次迭代中，…"（英文 "In each iteration of the loop where i < len holds, …"）为前缀。
+
+不含 LLM、无网络调用：AI 增强属调用方职责。
+
 ## 许可证
 
 MIT

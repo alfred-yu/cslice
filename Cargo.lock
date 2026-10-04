@@ -30,10 +30,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "cslice-py"
-version = "0.2.0"
+name = "cslice-draft"
+version = "0.3.0"
 dependencies = [
  "cslice-core",
+]
+
+[[package]]
+name = "cslice-py"
+version = "0.3.0"
+dependencies = [
+ "cslice-core",
+ "cslice-draft",
  "pyo3",
 ]
 
