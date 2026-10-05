@@ -14,7 +14,7 @@ def test_branch_single_return_zh():
     src = "int foo(int x) {\n    int y = 0;\n    if (x < 0) {\n        return -1;\n    }\n    y = x;\n    return y;\n}\n"
     d = generate_draft("foo", plan(src, "foo")[1], language="zh")
     assert isinstance(d, ReqDraft)
-    assert d.description == "当 x < 0 时，函数 foo 应返回 -1。"
+    assert d.description == "函数 foo 应返回 -1，当 x < 0 时。"
     assert d.verify_method == "测试"
     assert "ReqDraft" in repr(d)
 
@@ -60,10 +60,11 @@ def test_nested_loop_parent_context():
     assert inner.description.startswith(
         "在外层循环（i < len）的每次迭代中，函数 Crc32 应在满足 k < 8 的条件下重复执行循环迭代"
     )
-    # 循环内 if 分支：内层循环上下文 + 条件前缀
+    # 循环内 if 分支：内层循环上下文前导 + 条件后置
     branch = generate_draft("Crc32", items[4], language="zh")
-    assert branch.description.startswith(
-        "在该循环（k < 8）的每次迭代中，当 (crc & 1u) != 0u 时，函数 Crc32 应"
+    assert branch.description == (
+        "在该循环（k < 8）的每次迭代中，函数 Crc32 应将 crc 赋值为 (crc >> 1) ^ 0xEDB88320u，"
+        "当 (crc & 1u) != 0u 时。"
     )
     # 顶层循环头无父上下文
     outer = generate_draft("Crc32", items[1], language="zh")
@@ -82,7 +83,7 @@ def test_empty_function_fallback_zh_en():
 def test_english_branch():
     src = "int grade(int s) {\n    if (s >= 60) {\n        return 1;\n    } else {\n        return 0;\n    }\n}\n"
     items = plan(src, "grade")
-    assert generate_draft("grade", items[0], language="en").description == "When s >= 60, the grade function shall return 1."
+    assert generate_draft("grade", items[0], language="en").description == "The grade function shall return 1 when s >= 60."
     assert generate_draft("grade", items[1], language="en").description == "When none of the above conditions holds, the grade function shall return 0."
 
 

@@ -218,7 +218,10 @@ fn computation_draft(
     }
 }
 
-/// 分支块草稿：有条件分支（if / else-if）与无条件分支（else）
+/// 分支块草稿：有条件分支（if / else-if）与无条件分支（else）。
+/// 条件后置：if 条件放句尾（en "when …"；zh "，当 … 时"），多行为清单在
+/// "in order"/"按顺序执行" 之后、冒号之前插条件，保证条件覆盖清单全部行为；
+/// else 无条件表达式，保留前导句式。
 fn branch_draft(
     func_name: &str,
     summary: &BlockSummary,
@@ -226,23 +229,16 @@ fn branch_draft(
     language: &str,
 ) -> ReqDraft {
     let en = language == "en";
-    // 前缀：else / default 无条件前缀；if / else-if 用条件前缀；
-    // 条件提取失败（condition 为 None）且非 else 时无前缀（仅行为清单或兜底）
+    // else 保留前导句式（无条件表达式可后置）
     let prefix: Option<String> = if summary.is_else {
         Some(templates::lookup(language, "frame.else_prefix").to_string())
-    } else if let Some(cond) = &summary.condition {
-        Some(templates::render(
-            templates::lookup(language, "frame.cond_prefix"),
-            &[("condition", cond)],
-        ))
     } else {
         None
     };
 
-    let has_lead = summary.is_else || summary.condition.is_some();
     let sentence: Option<String> = if phrases.is_empty() {
         // 有引导语（else/条件）但无行为事实：执行分支内处理逻辑；否则交由兜底
-        if has_lead {
+        if summary.is_else || summary.condition.is_some() {
             Some(templates::render(
                 templates::lookup(language, "frame.branch_empty"),
                 &[("function_name", func_name)],
@@ -250,15 +246,47 @@ fn branch_draft(
         } else {
             None
         }
+    } else if let Some(cond) = &summary.condition {
+        // 条件后置：单行为直述 / 多行为清单（条件覆盖清单全部行为）
+        Some(if phrases.len() == 1 {
+            templates::render(
+                templates::lookup(language, "frame.single_cond"),
+                &[
+                    ("function_name", func_name),
+                    ("behavior", phrases[0].as_str()),
+                    ("condition", cond),
+                ],
+            )
+        } else {
+            templates::render(
+                templates::lookup(language, "frame.list_cond"),
+                &[
+                    ("function_name", func_name),
+                    ("condition", cond),
+                    ("numbered", join_numbered(phrases, en).as_str()),
+                ],
+            )
+        })
     } else {
         Some(single_or_list(func_name, phrases, language))
     };
 
+    // 有条件但无行为事实：兜底句 + 条件后缀（单/清单模板已含条件，不重复）
+    let needs_suffix = phrases.is_empty() && summary.condition.is_some();
+
     match sentence {
         Some(s) => {
-            let description = match &prefix {
-                Some(p) => join_prefixed(p, s, en),
-                None => s,
+            let description = match (prefix, needs_suffix) {
+                (Some(p), _) => join_prefixed(&p, s, en),
+                (None, true) => {
+                    let cond = summary.condition.clone().unwrap_or_default();
+                    let suffix = templates::render(
+                        templates::lookup(language, "frame.cond_suffix"),
+                        &[("condition", cond.as_str())],
+                    );
+                    format!("{}{}.", s.trim_end_matches('.'), suffix)
+                }
+                _ => s,
             };
             ReqDraft {
                 description,
@@ -514,7 +542,7 @@ mod tests {
     fn branch_single_return() {
         let src = "int foo(int x) {\n    int y = 0;\n    if (x < 0) {\n        return -1;\n    }\n    y = x;\n    return y;\n}\n";
         let d = draft_for(src, "foo", 1);
-        assert_eq!(d.description, "当 x < 0 时，函数 foo 应返回 -1。");
+        assert_eq!(d.description, "函数 foo 应返回 -1，当 x < 0 时。");
         assert_eq!(d.verify_method, "测试");
     }
 
@@ -542,7 +570,7 @@ mod tests {
     fn else_if_chain_condition() {
         let src = "int grade(int s) {\n    if (s >= 90) {\n        return 4;\n    } else if (s >= 80) {\n        return 3;\n    } else {\n        return 0;\n    }\n}\n";
         let d = draft_for(src, "grade", 1);
-        assert_eq!(d.description, "当 s >= 80 时，函数 grade 应返回 3。");
+        assert_eq!(d.description, "函数 grade 应返回 3，当 s >= 80 时。");
     }
 
     #[test]
@@ -767,15 +795,8 @@ mod tests {
         let if_branch = draft_for(src, "Crc32", 4);
         assert!(
             if_branch.description.starts_with(
-                "在该循环（k < 8）的每次迭代中，当 (crc & 1u) != 0u 时，函数 Crc32 应"
+                "在该循环（k < 8）的每次迭代中，函数 Crc32 应将 crc 赋值为 (crc >> 1) ^ 0xEDB88320u，当 (crc & 1u) != 0u 时。",
             ),
-            "{}",
-            if_branch.description
-        );
-        assert!(
-            if_branch
-                .description
-                .contains("将 crc 赋值为 (crc >> 1) ^ 0xEDB88320u"),
             "{}",
             if_branch.description
         );
@@ -824,7 +845,7 @@ mod tests {
         let if_branch = draft_for_lang(src, "Crc32", 4, "en");
         assert!(
             if_branch.description.starts_with(
-                "In each iteration of the loop where k < 8 holds, when (crc & 1u) != 0u, the Crc32 function shall"
+                "In each iteration of the loop where k < 8 holds, the Crc32 function shall set crc to (crc >> 1) ^ 0xEDB88320u when (crc & 1u) != 0u.",
             ),
             "{}",
             if_branch.description
@@ -858,7 +879,7 @@ mod tests {
         let d = draft_for_lang(src, "grade", 0, "en");
         assert_eq!(
             d.description,
-            "When s >= 60, the grade function shall return 1."
+            "The grade function shall return 1 when s >= 60."
         );
         assert_eq!(d.verify_method, "Test");
 

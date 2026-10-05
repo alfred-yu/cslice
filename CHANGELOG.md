@@ -7,6 +7,7 @@
 - Added: `cslice.viz` 可视化子模块与 `python -m cslice` CLI——文本视图（逐行归属标注、切片树、含守卫的明细、可选草稿节）与 Mermaid 导出（`cfg_to_mermaid` / `forest_to_mermaid`）；纯标准库零依赖
 - Added: 需求草稿自动携带守卫语境——切片的 `guard_conds` 合取为 `!(a) && !(b)`，以 "当 … 时，"/"When …, " 前缀置于最外层（先于循环语境）
 - Added: `cslice.drafts.lint_requirement` / `lint_summarize` 需求合规检查（"应/shall"句式、函数名主语、歧义词、空验证方法、原子性启发；warning + info 两级）
+- Changed: if 分支条件后置——由句首 "When {condition}, " 改为句尾 "when {condition}."（zh "，当 {condition} 时"），多行为清单在 "in order"/"按顺序执行" 之后插入条件以覆盖全部行为；守卫语境（"When !(…)、"）与循环语境（"in each iteration … where …"）保持前导
 - Changed: `behavior.init` 句式对齐需求工程参考格式——"将局部变量 {var} 初始化为 {value}" / "initialize the local variable {var} as {value}"
 - Changed: 移除 `BlockSummary.behavior_count` 死字段（Python 侧以 `len(behaviors)` 计算）
 - Fixed: CFG 中 else 分支体被聚合成不透明基本块（else_clause 包装节点未解包），return/break 的提前退出语义丢失
