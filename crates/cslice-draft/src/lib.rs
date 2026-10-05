@@ -34,7 +34,7 @@ pub struct ReqDraft {
 ///   `summary.parent_loop_cond` 携带直接父循环条件，描述加入
 ///   "（外层）循环每次迭代中"上下文，保证需求在其执行语境下无歧义；
 /// - 条件（守卫条件按序 + if 分支条件）统一**后置**：
-///   单一简单条件行内（"… when {cond}." / "…，当 {cond} 时。"）；
+///   单一简单条件行内（"… if {cond}." / "…，当 {cond} 时。"）；
 ///   多条件、复合条件（含顶层 `||`/`&&`）或多行为清单时用结构化条件块——
 ///   "when:" / "当：" 引出编号清单，顶层项以 -AND- 连接，复合项拆 1a/1b
 ///   子项加括号并以 -AND-/-OR- 连接（-AND- 标识且，-OR- 标识或）。
@@ -132,7 +132,7 @@ fn attach_conditions(
         // 单一简单条件：行内
         let cond = &conditions[0];
         if en {
-            format!("{base} when {cond}.")
+            format!("{base} if {cond}.")
         } else {
             format!("{base}，当 {cond} 时。")
         }
@@ -780,7 +780,7 @@ mod tests {
         );
         let d_en = generate_draft("f", &items[2], "en");
         assert!(
-            d_en.description.ends_with("when !(p == 0 || n <= 0)."),
+            d_en.description.ends_with("if !(p == 0 || n <= 0)."),
             "{}",
             d_en.description
         );
@@ -936,7 +936,7 @@ mod tests {
         let if_branch = draft_for_lang(src, "Crc32", 4, "en");
         assert!(
             if_branch.description.starts_with(
-                "In each iteration of the loop where k < 8 holds, the Crc32 function shall set crc to (crc >> 1) ^ 0xEDB88320u when (crc & 1u) != 0u.",
+                "In each iteration of the loop where k < 8 holds, the Crc32 function shall set crc to (crc >> 1) ^ 0xEDB88320u if (crc & 1u) != 0u.",
             ),
             "{}",
             if_branch.description
@@ -970,7 +970,7 @@ mod tests {
         let d = draft_for_lang(src, "grade", 0, "en");
         assert_eq!(
             d.description,
-            "The grade function shall return 1 when s >= 60."
+            "The grade function shall return 1 if s >= 60."
         );
         assert_eq!(d.verify_method, "Test");
 

@@ -41,10 +41,10 @@ def test_draft_carries_guard_condition_trailing_zh():
 def test_draft_guard_condition_trailing_en():
     items = plan(GUARD_SRC, "f")
     d = generate_draft("f", items[3], language="en")  # 循环体计算片
-    # 循环语境前导，守卫条件句尾 when 后置
+    # 循环语境前导，守卫条件句尾 if 后置（单条件）
     assert d.description == (
         "In each iteration of the loop where i < n holds, "
-        "the f function shall execute s += p[i] when !(p == 0 || n <= 0)."
+        "the f function shall execute s += p[i] if !(p == 0 || n <= 0)."
     )
 
 

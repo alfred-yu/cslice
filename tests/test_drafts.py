@@ -83,7 +83,7 @@ def test_empty_function_fallback_zh_en():
 def test_english_branch():
     src = "int grade(int s) {\n    if (s >= 60) {\n        return 1;\n    } else {\n        return 0;\n    }\n}\n"
     items = plan(src, "grade")
-    assert generate_draft("grade", items[0], language="en").description == "The grade function shall return 1 when s >= 60."
+    assert generate_draft("grade", items[0], language="en").description == "The grade function shall return 1 if s >= 60."
     assert generate_draft("grade", items[1], language="en").description == "When none of the above conditions holds, the grade function shall return 0."
 
 

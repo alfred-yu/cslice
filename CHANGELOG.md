@@ -8,6 +8,7 @@
 - Added: 需求草稿自动携带守卫语境——切片的 `guard_conds` 合取为 `!(a) && !(b)`，以 "当 … 时，"/"When …, " 前缀置于最外层（先于循环语境）
 - Added: `cslice.drafts.lint_requirement` / `lint_summarize` 需求合规检查（"应/shall"句式、函数名主语、歧义词、空验证方法、原子性启发；warning + info 两级）
 - Added: 结构化条件块——多条件、复合条件（含顶层 `||`/`&&`）或多行为清单时，条件以 "when:"/"当：" 引出编号清单：顶层项 `-AND-` 连接，复合项拆 1a/1b 子项加括号并以 `-AND-`/`-OR-` 连接（按括号深度 0 拆分，`!(…)` 原子不拆）；单一简单条件保持行内
+- Changed: 条件连接词语义化——单一简单条件行内用 `if`（"… shall X if {cond}."），多条件/复合条件的结构化 `when:` 块保持 `when`（"shall X when:"）
 - Changed: if 分支条件后置——由句首 "When {condition}, " 改为句尾 "when {condition}."（zh "，当 {condition} 时"），多行为清单在 "in order"/"按顺序执行" 之后插入条件以覆盖全部行为；守卫语境（"When !(…)、"）与循环语境（"in each iteration … where …"）保持前导
 - Changed: `behavior.init` 句式对齐需求工程参考格式——"将局部变量 {var} 初始化为 {value}" / "initialize the local variable {var} as {value}"
 - Changed: 移除 `BlockSummary.behavior_count` 死字段（Python 侧以 `len(behaviors)` 计算）
