@@ -167,6 +167,11 @@ pub enum Behavior {
     Call {
         name: String,
     },
+    /// 自增/自减语句（i++ / --i 作为独立语句；前缀后缀不区分）
+    Update {
+        var: String,
+        increment: bool,
+    },
     Break,
     Continue,
 }
@@ -366,7 +371,7 @@ fn collect_slice_plan(func: &Node, content: &str, cfg: &CfgGraph) -> Vec<SlicePl
                 flush_group(&mut group, &mut blocks, content, &guards);
                 let mut summary = BlockSummary::default();
                 summary.preproc_directive = first_line_text(&child, content);
-                collect_behaviors(&child, content, &mut summary);
+                collect_behaviors(&child, content, &mut summary, false);
                 blocks.push(PlannedBlock {
                     natural_start: child.start_position().row as u32 + 1,
                     natural_end: child.end_position().row as u32 + 1,
@@ -382,7 +387,7 @@ fn collect_slice_plan(func: &Node, content: &str, cfg: &CfgGraph) -> Vec<SlicePl
                 // return（返回结果）单独一片。其后语句（不可达代码）归新组。
                 flush_group(&mut group, &mut blocks, content, &guards);
                 let mut summary = BlockSummary::default();
-                collect_behaviors(&child, content, &mut summary);
+                collect_behaviors(&child, content, &mut summary, false);
                 blocks.push(PlannedBlock {
                     natural_start: child.start_position().row as u32 + 1,
                     natural_end: child.end_position().row as u32 + 1,
@@ -408,7 +413,7 @@ fn collect_slice_plan(func: &Node, content: &str, cfg: &CfgGraph) -> Vec<SlicePl
                 if has_init {
                     flush_group(&mut group, &mut blocks, content, &guards);
                     let mut summary = BlockSummary::default();
-                    collect_behaviors(&child, content, &mut summary);
+                    collect_behaviors(&child, content, &mut summary, false);
                     blocks.push(PlannedBlock {
                         natural_start: child.start_position().row as u32 + 1,
                         natural_end: child.end_position().row as u32 + 1,
@@ -513,7 +518,7 @@ fn flush_group(
     if let Some((s, e, nodes)) = group.take() {
         let mut summary = BlockSummary::default();
         for n in &nodes {
-            collect_behaviors(n, content, &mut summary);
+            collect_behaviors(n, content, &mut summary, false);
         }
         blocks.push(PlannedBlock {
             natural_start: s,
@@ -552,7 +557,7 @@ fn plan_if_chain(
         .child_by_field_name("condition")
         .map(|c| condition_text(&c, content));
     if let Some(cons) = if_node.child_by_field_name("consequence") {
-        collect_behaviors(&cons, content, &mut summary);
+        collect_behaviors(&cons, content, &mut summary, false);
     }
     blocks.push(PlannedBlock {
         natural_start: start,
@@ -581,7 +586,7 @@ fn plan_if_chain(
                     .child_by_field_name("condition")
                     .map(|c| condition_text(&c, content));
                 if let Some(cons) = inner.child_by_field_name("consequence") {
-                    collect_behaviors(&cons, content, &mut summary);
+                    collect_behaviors(&cons, content, &mut summary, false);
                 }
                 blocks.push(PlannedBlock {
                     natural_start: alt.start_position().row as u32 + 1,
@@ -599,7 +604,7 @@ fn plan_if_chain(
                 let mut summary = BlockSummary::default();
                 summary.parent_loop_cond = parent_loop_cond.map(str::to_string);
                 summary.is_else = true;
-                collect_behaviors(&alt, content, &mut summary);
+                collect_behaviors(&alt, content, &mut summary, false);
                 blocks.push(PlannedBlock {
                     natural_start: alt.start_position().row as u32 + 1,
                     natural_end: alt.end_position().row as u32 + 1,
@@ -813,7 +818,7 @@ fn plan_loop(
                     let mut s = BlockSummary::default();
                     s.parent_loop_cond = self_cond.clone();
                     s.preproc_directive = first_line_text(&n, content);
-                    collect_behaviors(&n, content, &mut s);
+                    collect_behaviors(&n, content, &mut s, false);
                     blocks.push(PlannedBlock {
                         natural_start: n.start_position().row as u32 + 1,
                         natural_end: n.end_position().row as u32 + 1,
@@ -834,7 +839,7 @@ fn plan_loop(
                 let mut s = BlockSummary::default();
                 s.parent_loop_cond = self_cond.clone();
                 for n in &nodes {
-                    collect_behaviors(n, content, &mut s);
+                    collect_behaviors(n, content, &mut s, false);
                 }
                 blocks.push(PlannedBlock {
                     natural_start: start,
@@ -880,7 +885,7 @@ fn plan_switch(
                 Some(v) => summary.case_value = Some(node_text(&v, content)),
                 None => summary.is_else = true, // default 分支
             }
-            collect_behaviors(&child, content, &mut summary);
+            collect_behaviors(&child, content, &mut summary, false);
             blocks.push(PlannedBlock {
                 // 首个 case 片从 switch 头起始（switch 表达式是分派条件）
                 natural_start: if first {
@@ -900,8 +905,10 @@ fn plan_switch(
     }
 }
 
-/// 递归收集子树内的行为事实（赋值/初始化声明/return/调用/跳转）
-fn collect_behaviors(node: &Node, content: &str, out: &mut BlockSummary) {
+/// 递归收集子树内的行为事实（赋值/初始化声明/return/调用/跳转/自增自减）。
+/// `nested` 表示当前节点处于更大表达式内部（赋值右侧、初始化值、return 表达式、
+/// 调用实参等）——此时自增/自减不单列行为（其宿主行为已覆盖该文本）。
+fn collect_behaviors(node: &Node, content: &str, out: &mut BlockSummary, nested: bool) {
     match node.kind() {
         "assignment_expression" => {
             let op = node.child_by_field_name("operator");
@@ -952,13 +959,42 @@ fn collect_behaviors(node: &Node, content: &str, out: &mut BlockSummary) {
                 });
             }
         }
+        "update_expression" => {
+            if !nested {
+                let op = node
+                    .child_by_field_name("operator")
+                    .map(|o| node_text(&o, content))
+                    .unwrap_or_default();
+                let var = node
+                    .child_by_field_name("argument")
+                    .map(|a| node_text(&a, content))
+                    .unwrap_or_default();
+                if !var.is_empty() {
+                    out.behaviors.push(Behavior::Update {
+                        var,
+                        increment: op == "++",
+                    });
+                }
+            }
+        }
         "break_statement" => out.behaviors.push(Behavior::Break),
         "continue_statement" => out.behaviors.push(Behavior::Continue),
         _ => {}
     }
+    // 语句边界（表达式语句/复合语句/声明/return/case）不产生嵌套；
+    // 其余（表达式节点）内部的子树视为嵌套
+    let child_nested = nested
+        || !matches!(
+            node.kind(),
+            "expression_statement"
+                | "compound_statement"
+                | "declaration"
+                | "return_statement"
+                | "case_statement"
+        );
     for i in 0..node.named_child_count() {
         if let Some(child) = node.named_child(i) {
-            collect_behaviors(&child, content, out);
+            collect_behaviors(&child, content, out, child_nested);
         }
     }
 }

@@ -40,8 +40,8 @@ def test_loop_with_control_and_body_context():
 def test_case_and_default():
     src = "int op(int cmd, int v) {\n    switch (cmd) {\n    case 1:\n        v += 1;\n        break;\n    default:\n        v = 0;\n        break;\n    }\n    return v;\n}\n"
     items = plan(src, "op")
-    assert generate_draft("op", items[0], language="zh").description == "当 cmd 的取值等于 1 时，函数 op 应执行 v += 1。"
-    assert generate_draft("op", items[1], language="zh").description == "当 cmd 的取值不等于任何指定取值时，函数 op 应将 v 赋值为 0。"
+    assert generate_draft("op", items[0], language="zh").description == "函数 op 应执行 v += 1，当 cmd 等于 1 时。"
+    assert generate_draft("op", items[1], language="zh").description == "函数 op 应将 v 赋值为 0，当 cmd 取其它值 时。"
 
 
 def test_preproc_verify_method_is_review():

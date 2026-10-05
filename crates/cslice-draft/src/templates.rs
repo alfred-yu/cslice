@@ -19,6 +19,8 @@ pub const BEHAVIOR_KEYS: &[&str] = &[
     "behavior.call",
     "behavior.break",
     "behavior.continue",
+    "behavior.increment",
+    "behavior.decrement",
 ];
 
 /// 句子框架层模板 key
@@ -29,8 +31,6 @@ pub const FRAME_KEYS: &[&str] = &[
     "frame.else_prefix",
     "frame.loop_prefix",
     "frame.outer_loop_prefix",
-    "frame.case_eq",
-    "frame.case_default",
     "frame.loop",
     "frame.loop_nocond",
     "frame.loop_control",
@@ -65,8 +65,10 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
             "behavior.return" => "return {expr}",
             "behavior.return_void" => "return",
             "behavior.call" => "invoke the function {name}",
-            "behavior.break" => "terminate the current loop",
+            "behavior.break" => "terminate the innermost enclosing loop",
             "behavior.continue" => "proceed to the next iteration",
+            "behavior.increment" => "increment the local variable {var} by 1",
+            "behavior.decrement" => "decrement the local variable {var} by 1",
             "frame.single" => "The {function_name} function shall {behavior}.",
             "frame.list" => {
                 "The {function_name} function shall perform the following operations in order: {numbered}."
@@ -79,8 +81,6 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
             "frame.outer_loop_prefix" => {
                 "Within each iteration of the outer loop where {parent_loop_cond} holds, "
             }
-            "frame.case_eq" => "When {condition} equals {case_value}, ",
-            "frame.case_default" => "When {condition} does not equal any specified value, ",
             "frame.loop" => {
                 "The {function_name} function shall iterate repeatedly while {loop_cond} holds{loop_control}."
             }
@@ -104,16 +104,16 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
             "behavior.return" => "返回 {expr}",
             "behavior.return_void" => "返回",
             "behavior.call" => "调用函数 {name}",
-            "behavior.break" => "终止当前循环",
+            "behavior.break" => "终止所在（最内层）循环",
             "behavior.continue" => "进入下一次循环",
+            "behavior.increment" => "将局部变量 {var} 加 1",
+            "behavior.decrement" => "将局部变量 {var} 减 1",
             "frame.single" => "函数 {function_name} 应{behavior}。",
             "frame.list" => "函数 {function_name} 应按顺序执行以下操作：{numbered}。",
             "frame.branch_empty" => "函数 {function_name} 应执行该分支内的处理逻辑。",
             "frame.else_prefix" => "当上述条件均不成立时，",
             "frame.loop_prefix" => "在该循环（{parent_loop_cond}）的每次迭代中，",
             "frame.outer_loop_prefix" => "在外层循环（{parent_loop_cond}）的每次迭代中，",
-            "frame.case_eq" => "当 {condition} 的取值等于 {case_value} 时，",
-            "frame.case_default" => "当 {condition} 的取值不等于任何指定取值时，",
             "frame.loop" => {
                 "函数 {function_name} 应在满足 {loop_cond} 的条件下重复执行循环迭代{loop_control}。"
             }

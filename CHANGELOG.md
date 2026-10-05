@@ -7,6 +7,9 @@
 - Added: `cslice.viz` 可视化子模块与 `python -m cslice` CLI——文本视图（逐行归属标注、切片树、含守卫的明细、可选草稿节）与 Mermaid 导出（`cfg_to_mermaid` / `forest_to_mermaid`）；纯标准库零依赖
 - Added: 需求草稿自动携带守卫语境——切片的 `guard_conds` 合取为 `!(a) && !(b)`，以 "当 … 时，"/"When …, " 前缀置于最外层（先于循环语境）
 - Added: `cslice.drafts.lint_requirement` / `lint_summarize` 需求合规检查（"应/shall"句式、函数名主语、歧义词、空验证方法、原子性启发；warning + info 两级）
+- Added: 自增/自减语句（`i++` / `--i`，独立语句形态）行为提取与自然语言句式——"increment/decrement the local variable {var} by 1" / "将局部变量 {var} 加 1/减 1"；嵌在更大表达式（赋值右侧、初始化值等）内部时不单列
+- Added: case 分派条件并入结构化条件清单——case 取值渲染为 "{cond} is equal to {value}"，default 为 "{cond} does not match any case value"；不再使用句首 case 前缀
+- Changed: break 短语措辞明确化——"terminate the innermost enclosing loop" / "终止所在（最内层）循环"；Branch 类切片放开 break/continue 短语（switch 体不拆分支片，语义安全），Case 类放开 continue（指向所在循环）
 - Added: 结构化条件块——多条件、复合条件（含顶层 `||`/`&&`）或多行为清单时，条件以 "when:"/"当：" 引出编号清单：顶层项 `-AND-` 连接，复合项拆 1a/1b 子项加括号并以 `-AND-`/`-OR-` 连接（按括号深度 0 拆分，`!(…)` 原子不拆）；单一简单条件保持行内
 - Added: 条件中的比较运算符自然语言化——`==`→is equal to/等于、`!=`→is not equal to/不等于、`>`→is greater than/大于、`<`→is less than/小于、`>=`→is greater than or equal to/大于等于、`<=`→is less than or equal to/小于等于；`>>`/`<<`（移位）与 `->` 不受影响，`&&`/`||` 保留符号
 - Changed: 条件连接词语义化——单一简单条件行内用 `if`（"… shall X if {cond}."），多条件/复合条件的结构化 `when:` 块保持 `when`（"shall X when:"）

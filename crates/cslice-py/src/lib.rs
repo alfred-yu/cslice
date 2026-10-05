@@ -49,7 +49,8 @@ impl PyFunctionDef {
 
 /// 逻辑块内的单一行为事实。`kind` 决定哪些字段有值：
 /// init → var/value；assign → lhs/rhs；compound_assign → text；
-/// return → expr（裸 return 为空串）；call → name；break/continue 无附加字段。
+/// return → expr（裸 return 为空串）；call → name；
+/// increment/decrement → var；break/continue 无附加字段。
 #[pyclass(get_all, skip_from_py_object, name = "Behavior")]
 #[derive(Clone, Default)]
 struct PyBehavior {
@@ -99,6 +100,15 @@ impl From<&core::Behavior> for PyBehavior {
             core::Behavior::Call { name } => PyBehavior {
                 kind: "call".into(),
                 name: Some(name.clone()),
+                ..Default::default()
+            },
+            core::Behavior::Update { var, increment } => PyBehavior {
+                kind: if *increment {
+                    "increment".into()
+                } else {
+                    "decrement".into()
+                },
+                var: Some(var.clone()),
                 ..Default::default()
             },
             core::Behavior::Break => PyBehavior {

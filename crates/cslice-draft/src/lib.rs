@@ -100,7 +100,31 @@ fn generate_from_parts(
         }
         SlicePlanKind::Loop => loop_draft(func_name, summary, language),
         SlicePlanKind::Case => {
-            let d = case_draft(func_name, summary, &phrases, language);
+            let d = case_draft(func_name, &phrases, language);
+            // 分派条件并入结构化条件清单：case 取值 → "{cond} == {value}"
+            // （自然语言化由 attach_conditions 统一处理）；default → 预措辞项
+            let switch_cond = summary
+                .condition
+                .as_deref()
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if language == "en" {
+                        "the selection expression".to_string()
+                    } else {
+                        "选择表达式".to_string()
+                    }
+                });
+            let item = match &summary.case_value {
+                Some(v) => format!("{switch_cond} == {v}"),
+                None => {
+                    if language == "en" {
+                        format!("{switch_cond} does not match any case value")
+                    } else {
+                        format!("{switch_cond} 取其它值")
+                    }
+                }
+            };
+            conditions.push(item);
             with_parent_context(d, summary, language)
         }
         SlicePlanKind::Preproc => preproc_draft(func_name, summary, language),
@@ -139,7 +163,14 @@ fn verbalize_condition(cond: &str, language: &str) -> String {
             );
             iter.next();
         } else if rest.starts_with("<=") {
-            push_spaced(&mut out, if en { "is less than or equal to " } else { "小于等于 " });
+            push_spaced(
+                &mut out,
+                if en {
+                    "is less than or equal to "
+                } else {
+                    "小于等于 "
+                },
+            );
             iter.next();
         } else if rest.starts_with(">>") || rest.starts_with("<<") || rest.starts_with("->") {
             out.push_str(&rest[..2]);
@@ -182,10 +213,7 @@ fn attach_conditions(
         .map(|c| verbalize_condition(c, language))
         .collect();
     let compound = conditions.iter().any(|c| split_top_level(c).is_some());
-    let base = draft
-        .description
-        .trim_end_matches(['.', '。'])
-        .to_string();
+    let base = draft.description.trim_end_matches(['.', '。']).to_string();
     let description = if conditions.len() == 1 && !compound && !is_list {
         // 单一简单条件：行内
         let cond = &conditions[0];
@@ -198,7 +226,10 @@ fn attach_conditions(
         let intro = if en { " when:" } else { "，当：" };
         format!("{base}{intro}\n{}", render_condition_block(&conditions))
     };
-    ReqDraft { description, verify_method: draft.verify_method }
+    ReqDraft {
+        description,
+        verify_method: draft.verify_method,
+    }
 }
 
 /// 结构化条件块：顶层项按序编号（1. 2. …），项间 -AND- 连接（守卫与分支
@@ -491,30 +522,9 @@ fn loop_draft(func_name: &str, summary: &BlockSummary, language: &str) -> ReqDra
     }
 }
 
-/// switch case 块草稿：引用 switch 条件与 case 取值
-fn case_draft(
-    func_name: &str,
-    summary: &BlockSummary,
-    phrases: &[String],
-    language: &str,
-) -> ReqDraft {
+/// switch case 块草稿：分派条件由顶层并入结构化条件清单，此处仅行为句
+fn case_draft(func_name: &str, phrases: &[String], language: &str) -> ReqDraft {
     let en = language == "en";
-    let switch_cond = summary.condition.as_deref().unwrap_or(if en {
-        "the selection expression"
-    } else {
-        "选择表达式"
-    });
-    let prefix = match summary.case_value.as_deref() {
-        Some(v) => templates::render(
-            templates::lookup(language, "frame.case_eq"),
-            &[("condition", switch_cond), ("case_value", v)],
-        ),
-        None => templates::render(
-            templates::lookup(language, "frame.case_default"),
-            &[("condition", switch_cond)],
-        ),
-    };
-
     let sentence = if phrases.is_empty() {
         templates::render(
             templates::lookup(language, "frame.branch_empty"),
@@ -525,7 +535,7 @@ fn case_draft(
     };
 
     ReqDraft {
-        description: join_prefixed(&prefix, sentence, en),
+        description: sentence,
         verify_method: test_verify(en).into(),
     }
 }
@@ -605,14 +615,37 @@ fn behavior_phrases(summary: &BlockSummary, kind: SlicePlanKind, language: &str)
                     ));
                 }
             }
+            Behavior::Update { var, increment } => phrases.push(templates::render(
+                templates::lookup(
+                    language,
+                    if *increment {
+                        "behavior.increment"
+                    } else {
+                        "behavior.decrement"
+                    },
+                ),
+                &[("var", var)],
+            )),
             Behavior::Break => {
-                // 循环头独立成片后，break 位于循环体的计算片中
-                if matches!(kind, SlicePlanKind::Loop | SlicePlanKind::Computation) {
+                // break 终止所在（最内层）循环；case 内的 break 退出的是 switch，
+                // 不产生"终止循环"表述（分派条件已由顶层条件清单覆盖）。
+                // Branch 片只会在循环体内出现（switch 体不拆分支片），放开安全。
+                if matches!(
+                    kind,
+                    SlicePlanKind::Loop | SlicePlanKind::Computation | SlicePlanKind::Branch
+                ) {
                     phrases.push(templates::lookup(language, "behavior.break").to_string());
                 }
             }
             Behavior::Continue => {
-                if matches!(kind, SlicePlanKind::Loop | SlicePlanKind::Computation) {
+                // continue 必然属于外层循环（case 内的 continue 也指向循环）
+                if matches!(
+                    kind,
+                    SlicePlanKind::Loop
+                        | SlicePlanKind::Computation
+                        | SlicePlanKind::Branch
+                        | SlicePlanKind::Case
+                ) {
                     phrases.push(templates::lookup(language, "behavior.continue").to_string());
                 }
             }
@@ -753,13 +786,14 @@ mod tests {
         let case = draft_for(src, "op", 0);
         assert_eq!(
             case.description,
-            "当 cmd 的取值等于 1 时，函数 op 应执行 v += 1。"
+            "函数 op 应执行 v += 1，当 cmd 等于 1 时。"
         );
 
+        // default：分派条件并入清单（预措辞项）
         let default = draft_for(src, "op", 1);
         assert_eq!(
             default.description,
-            "当 cmd 的取值不等于任何指定取值时，函数 op 应将 v 赋值为 0。"
+            "函数 op 应将 v 赋值为 0，当 cmd 取其它值 时。"
         );
     }
 
@@ -838,7 +872,8 @@ mod tests {
         );
         let d_en = generate_draft("f", &items[2], "en");
         assert!(
-            d_en.description.ends_with("if !(p is equal to 0 || n is less than or equal to 0)."),
+            d_en.description
+                .ends_with("if !(p is equal to 0 || n is less than or equal to 0)."),
             "{}",
             d_en.description
         );
@@ -886,6 +921,104 @@ mod tests {
 2.!(b is equal to 0)",
             "{}",
             d_en.description
+        );
+    }
+
+    #[test]
+    fn update_statements_use_natural_language() {
+        // 独立自增/自减语句：自然语言句式（en decrement/increment the local variable …）
+        let src = "void f(int n) {
+    int result = 0;
+    result--;
+    result++;
+}
+";
+        let items = plan_items_all(src, "f");
+        // 片序：0 初始化 / 1 result-- 与 result++（连续语句聚成一片，编号清单）
+        assert_eq!(items.len(), 2, "{:?}", items);
+        let d = generate_draft("f", &items[1], "zh");
+        assert_eq!(
+            d.description,
+            "函数 f 应按顺序执行以下操作：1) 将局部变量 result 减 1；
+2) 将局部变量 result 加 1。",
+            "{}",
+            d.description
+        );
+        let d_en = generate_draft("f", &items[1], "en");
+        assert_eq!(
+            d_en.description,
+            "The f function shall perform the following operations in order: 1) decrement the local variable result by 1;
+2) increment the local variable result by 1."
+        );
+        // 嵌在赋值右侧的自增不单列（宿主行为已覆盖）：y = x++;
+        let nested = "void g(int x) {
+    int y = x++;
+}
+";
+        let items_g = plan_items_all(nested, "g");
+        let d = generate_draft("g", &items_g[0], "zh");
+        assert_eq!(
+            d.description, "函数 g 应将局部变量 y 初始化为 x++。",
+            "{}",
+            d.description
+        );
+    }
+
+    #[test]
+    fn branch_break_names_innermost_loop() {
+        // 循环体内 if+break：Branch 类放开 break 短语，措辞指明最内层循环
+        let src = "void f(int n) {
+    while (n > 0) {
+        if (n == 5) {
+            break;
+        }
+        n--;
+    }
+}
+";
+        let items = plan_items_all(src, "f");
+        // 片序：0 while 头 / 1 if 分支（break）/ 2 n-- 计算片
+        let d = generate_draft("f", &items[1], "en");
+        assert_eq!(
+            d.description,
+            "In each iteration of the loop where n > 0 holds, the f function shall terminate the innermost enclosing loop if n is equal to 5.",
+            "{}",
+            d.description
+        );
+        // 循环体内的 n--：自减自然语言句式 + 循环语境前导 + break 守卫条件
+        let dec = generate_draft("f", &items[2], "zh");
+        assert_eq!(
+            dec.description,
+            "在该循环（n > 0）的每次迭代中，函数 f 应将局部变量 n 减 1，当 !(n 等于 5) 时。",
+            "{}",
+            dec.description
+        );
+    }
+
+    #[test]
+    fn case_continue_targets_enclosing_loop() {
+        // switch 在循环内：case 中的 continue 指向循环（Case 类放开 continue 短语）
+        let src = "void f(int x) {
+    for (int i = 0; i < 8; i++) {
+        switch (x) {
+        case 0:
+            continue;
+        default:
+            work(x);
+            break;
+        }
+    }
+}
+";
+        let items = plan_items_all(src, "f");
+        // 片序：0 for 头 / 1 case 0（continue）/ 2 default（work+break）
+        let d = generate_draft("f", &items[1], "en");
+        assert!(
+            d.description.starts_with(
+                "In each iteration of the loop where i < 8 holds, the f function shall proceed to the next iteration",
+            ),
+            "{}",
+            d.description
         );
     }
 
@@ -1091,7 +1224,7 @@ mod tests {
         let d = draft_for_lang(src, "op", 0, "en");
         assert_eq!(
             d.description,
-            "When cmd equals 1, the op function shall execute v += 1."
+            "The op function shall execute v += 1 if cmd is equal to 1."
         );
 
         let pre = "void configure(void) {\n    int a = 0;\n#ifdef DEBUG\n    log_debug();\n#endif\n    a = 1;\n}\n";
