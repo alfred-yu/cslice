@@ -76,7 +76,7 @@ def test_cli_text_and_drafts(tmp_path, capsys):
     report = out_file.read_text(encoding="utf-8")
     assert "—— 切片树" in report
     assert "—— 切片需求草稿 ——" in report
-    assert "函数 f 应将 s 初始化为 0。" in report
+    assert "函数 f 应将局部变量 s 初始化为 0。" in report
 
 
 def test_cli_cfg_mermaid_stdout(tmp_path, capsys):

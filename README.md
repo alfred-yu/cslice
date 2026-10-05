@@ -153,8 +153,8 @@ drafts = generate_drafts(funcs[0].name, items)                      # batch
 
 Example output for `int y = 0;` inside `calc`:
 
-- en (default): `The calc function shall initialize y to 0.` (verify method: `Test`)
-- zh (`language="zh"`): `函数 calc 应将 y 初始化为 0。` (verify method: `测试`)
+- en (default): `The calc function shall initialize the local variable y as 0.` (verify method: `Test`)
+- zh (`language="zh"`): `函数 calc 应将局部变量 y 初始化为 0。` (verify method: `测试`)
 
 Slices inside nested loops carry their execution context: the draft for a
 statement inside `for (i = 0; i < len; i++)` is prefixed with

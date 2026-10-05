@@ -22,7 +22,7 @@ def test_branch_single_return_zh():
 def test_computation_init_assign_return():
     src = "int calc(int x) {\n    int y = 0;\n    y = x * 2;\n    return y;\n}\n"
     items = plan(src, "calc")
-    assert generate_draft("calc", items[0], language="zh").description == "函数 calc 应将 y 初始化为 0。"
+    assert generate_draft("calc", items[0], language="zh").description == "函数 calc 应将局部变量 y 初始化为 0。"
     assert generate_draft("calc", items[1], language="zh").description == "函数 calc 应将 y 赋值为 x * 2。"
     assert generate_draft("calc", items[2], language="zh").description == "函数 calc 应返回 y。"
 
@@ -109,17 +109,17 @@ def test_generate_drafts_batch():
     items = plan(src, "calc")
     drafts = generate_drafts("calc", items, language="zh")
     assert [d.description for d in drafts] == [
-        "函数 calc 应将 y 初始化为 0。",
+        "函数 calc 应将局部变量 y 初始化为 0。",
         "函数 calc 应将 y 赋值为 x * 2。",
         "函数 calc 应返回 y。",
     ]
     drafts_en = generate_drafts("calc", items, language="en")
-    assert drafts_en[0].description == "The calc function shall initialize y to 0."
+    assert drafts_en[0].description == "The calc function shall initialize the local variable y as 0."
 
 
 def test_default_language_is_english():
     src = "int calc(int x) {\n    int y = 0;\n    y = x * 2;\n    return y;\n}\n"
     items = plan(src, "calc")
-    assert generate_draft("calc", items[0]).description == "The calc function shall initialize y to 0."
+    assert generate_draft("calc", items[0]).description == "The calc function shall initialize the local variable y as 0."
     assert generate_draft("calc", items[0]).verify_method == "Test"
     assert generate_drafts("calc", items)[1].description == "The calc function shall set y to x * 2."

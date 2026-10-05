@@ -34,7 +34,7 @@ def test_draft_carries_guard_prefix_zh():
     assert d.description.startswith("当 !(p == 0 || n <= 0) 时，")
     assert "函数 f 应在满足 i < n 的条件下重复执行循环迭代" in d.description
     # 守卫之前的初始化片不受影响
-    assert generate_draft("f", items[0], language="zh").description == "函数 f 应将 s 初始化为 0。"
+    assert generate_draft("f", items[0], language="zh").description == "函数 f 应将局部变量 s 初始化为 0。"
 
 
 def test_draft_guard_prefix_outermost_order_en():

@@ -525,7 +525,7 @@ mod tests {
         let d = draft_for(src, "f", 0);
         assert!(
             d.description
-                .contains("1) 将 t 初始化为 x；\n2) 执行 t += 1；\n3) 调用函数 log"),
+                .contains("1) 将局部变量 t 初始化为 x；\n2) 执行 t += 1；\n3) 调用函数 log"),
             "{}",
             d.description
         );
@@ -617,7 +617,7 @@ mod tests {
         // 初始化声明独立成片：初始值影响逻辑，单独一条初始化需求
         let multi = "int calc(int x) {\n    int y = 0;\n    y = x * 2;\n    return y;\n}\n";
         let d = draft_for(multi, "calc", 0);
-        assert_eq!(d.description, "函数 calc 应将 y 初始化为 0。");
+        assert_eq!(d.description, "函数 calc 应将局部变量 y 初始化为 0。");
 
         // 赋值独立成片
         let d = draft_for(multi, "calc", 1);
@@ -874,7 +874,10 @@ mod tests {
         // 初始化声明独立成片（英文单行为）
         let multi = "int calc(int x) {\n    int y = 0;\n    y = x * 2;\n    return y;\n}\n";
         let d = draft_for_lang(multi, "calc", 0, "en");
-        assert_eq!(d.description, "The calc function shall initialize y to 0.");
+        assert_eq!(
+            d.description,
+            "The calc function shall initialize the local variable y as 0."
+        );
 
         // 连续赋值聚成一片：英文多行为编号清单
         let seq =

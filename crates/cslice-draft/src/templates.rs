@@ -60,7 +60,7 @@ pub fn lookup(language: &str, key: &str) -> &'static str {
 fn default_template(lang: &str, key: &str) -> Option<&'static str> {
     if lang == "en" {
         Some(match key {
-            "behavior.init" => "initialize {var} to {value}",
+            "behavior.init" => "initialize the local variable {var} as {value}",
             "behavior.assign" => "set {lhs} to {rhs}",
             "behavior.compound_assign" => "execute {text}",
             "behavior.return" => "return {expr}",
@@ -100,7 +100,7 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
         })
     } else {
         Some(match key {
-            "behavior.init" => "将 {var} 初始化为 {value}",
+            "behavior.init" => "将局部变量 {var} 初始化为 {value}",
             "behavior.assign" => "将 {lhs} 赋值为 {rhs}",
             "behavior.compound_assign" => "执行 {text}",
             "behavior.return" => "返回 {expr}",
