@@ -32,7 +32,7 @@ def test_draft_carries_guard_condition_trailing_zh():
     items = plan(GUARD_SRC, "f")
     d = generate_draft("f", items[2], language="zh")  # 循环头片
     # 守卫条件行内后置（单一原子条件）
-    assert d.description.endswith("，当 !(p == 0 || n <= 0) 时。")
+    assert d.description.endswith("，当 !(p 等于 0 || n 小于等于 0) 时。")
     assert d.description.startswith("函数 f 应在满足 i < n 的条件下重复执行循环迭代")
     # 守卫之前的初始化片不受影响
     assert generate_draft("f", items[0], language="zh").description == "函数 f 应将局部变量 s 初始化为 0。"
@@ -44,7 +44,7 @@ def test_draft_guard_condition_trailing_en():
     # 循环语境前导，守卫条件句尾 if 后置（单条件）
     assert d.description == (
         "In each iteration of the loop where i < n holds, "
-        "the f function shall execute s += p[i] if !(p == 0 || n <= 0)."
+        "the f function shall execute s += p[i] if !(p is equal to 0 || n is less than or equal to 0)."
     )
 
 

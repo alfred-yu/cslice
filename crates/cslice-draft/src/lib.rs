@@ -111,6 +111,59 @@ fn generate_from_parts(
     (draft, is_list)
 }
 
+/// 比较运算符自然语言化（仅条件渲染用）：
+/// `==`→is equal to/等于、`!=`→is not equal to/不等于、`>`→is greater than/大于、
+/// `<`→is less than/小于、`>=`→is greater than or equal to/大于等于、
+/// `<=`→is less than or equal to/小于等于。
+/// `>>`/`<<`（移位）与 `->` 原样保留；`&&`/`||` 逻辑符保留原样；单字符 `=` 原样。
+fn verbalize_condition(cond: &str, language: &str) -> String {
+    let en = language == "en";
+    let mut out = String::with_capacity(cond.len() + 32);
+    let mut iter = cond.char_indices().peekable();
+    while let Some((i, ch)) = iter.next() {
+        let rest = &cond[i..];
+        if rest.starts_with("==") {
+            push_spaced(&mut out, if en { "is equal to " } else { "等于 " });
+            iter.next();
+        } else if rest.starts_with("!=") {
+            push_spaced(&mut out, if en { "is not equal to " } else { "不等于 " });
+            iter.next();
+        } else if rest.starts_with(">=") {
+            push_spaced(
+                &mut out,
+                if en {
+                    "is greater than or equal to "
+                } else {
+                    "大于等于 "
+                },
+            );
+            iter.next();
+        } else if rest.starts_with("<=") {
+            push_spaced(&mut out, if en { "is less than or equal to " } else { "小于等于 " });
+            iter.next();
+        } else if rest.starts_with(">>") || rest.starts_with("<<") || rest.starts_with("->") {
+            out.push_str(&rest[..2]);
+            iter.next();
+        } else if ch == '>' {
+            push_spaced(&mut out, if en { "is greater than " } else { "大于 " });
+        } else if ch == '<' {
+            push_spaced(&mut out, if en { "is less than " } else { "小于 " });
+        } else {
+            out.push(ch);
+        }
+    }
+    // 运算符两侧可能与原文空格叠加，折叠为单空格（条件文本本就经 collapse_ws 规范化）
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 追加短语：前导空格仅在必要时补（避免 "s>=60" 这类无空格输入粘连）
+fn push_spaced(out: &mut String, phrase: &str) {
+    if !out.is_empty() && !out.ends_with(' ') {
+        out.push(' ');
+    }
+    out.push_str(phrase);
+}
+
 /// 条件后置：单一简单条件行内；多条件、复合条件或多行为清单用结构化
 /// "when:"/"当：" 块（编号项 -AND- 连接，复合项拆 1a/1b 子项加括号）。
 fn attach_conditions(
@@ -123,6 +176,11 @@ fn attach_conditions(
         return draft;
     }
     let en = language == "en";
+    // 比较运算符自然语言化（拆分前逐项处理，逻辑符 && / || 原样保留）
+    let conditions: Vec<String> = conditions
+        .iter()
+        .map(|c| verbalize_condition(c, language))
+        .collect();
     let compound = conditions.iter().any(|c| split_top_level(c).is_some());
     let base = draft
         .description
@@ -138,7 +196,7 @@ fn attach_conditions(
         }
     } else {
         let intro = if en { " when:" } else { "，当：" };
-        format!("{base}{intro}\n{}", render_condition_block(conditions))
+        format!("{base}{intro}\n{}", render_condition_block(&conditions))
     };
     ReqDraft { description, verify_method: draft.verify_method }
 }
@@ -620,7 +678,7 @@ mod tests {
     fn branch_single_return() {
         let src = "int foo(int x) {\n    int y = 0;\n    if (x < 0) {\n        return -1;\n    }\n    y = x;\n    return y;\n}\n";
         let d = draft_for(src, "foo", 1);
-        assert_eq!(d.description, "函数 foo 应返回 -1，当 x < 0 时。");
+        assert_eq!(d.description, "函数 foo 应返回 -1，当 x 小于 0 时。");
         assert_eq!(d.verify_method, "测试");
     }
 
@@ -648,7 +706,7 @@ mod tests {
     fn else_if_chain_condition() {
         let src = "int grade(int s) {\n    if (s >= 90) {\n        return 4;\n    } else if (s >= 80) {\n        return 3;\n    } else {\n        return 0;\n    }\n}\n";
         let d = draft_for(src, "grade", 1);
-        assert_eq!(d.description, "函数 grade 应返回 3，当 s >= 80 时。");
+        assert_eq!(d.description, "函数 grade 应返回 3，当 s 大于等于 80 时。");
     }
 
     #[test]
@@ -774,13 +832,13 @@ mod tests {
         let d = generate_draft("f", &items[2], "zh");
         assert_eq!(
             d.description,
-            "函数 f 应在满足 i < n 的条件下重复执行循环迭代（循环控制：int i = 0；i < n；i++），当 !(p == 0 || n <= 0) 时。",
+            "函数 f 应在满足 i < n 的条件下重复执行循环迭代（循环控制：int i = 0；i < n；i++），当 !(p 等于 0 || n 小于等于 0) 时。",
             "{}",
             d.description
         );
         let d_en = generate_draft("f", &items[2], "en");
         assert!(
-            d_en.description.ends_with("if !(p == 0 || n <= 0)."),
+            d_en.description.ends_with("if !(p is equal to 0 || n is less than or equal to 0)."),
             "{}",
             d_en.description
         );
@@ -788,7 +846,7 @@ mod tests {
         let body = generate_draft("f", &items[3], "zh");
         assert_eq!(
             body.description,
-            "在该循环（i < n）的每次迭代中，函数 f 应执行 s += p[i]，当 !(p == 0 || n <= 0) 时。",
+            "在该循环（i < n）的每次迭代中，函数 f 应执行 s += p[i]，当 !(p 等于 0 || n 小于等于 0) 时。",
             "{}",
             body.description
         );
@@ -813,9 +871,9 @@ mod tests {
         assert_eq!(
             d.description,
             "函数 f 应返回 work(a, b)，当：
-1.!(a == 0)
+1.!(a 等于 0)
 -AND-
-2.!(b == 0)",
+2.!(b 等于 0)",
             "{}",
             d.description
         );
@@ -823,9 +881,9 @@ mod tests {
         assert_eq!(
             d_en.description,
             "The f function shall return work(a, b) when:
-1.!(a == 0)
+1.!(a is equal to 0)
 -AND-
-2.!(b == 0)",
+2.!(b is equal to 0)",
             "{}",
             d_en.description
         );
@@ -886,7 +944,7 @@ mod tests {
         let if_branch = draft_for(src, "Crc32", 4);
         assert!(
             if_branch.description.starts_with(
-                "在该循环（k < 8）的每次迭代中，函数 Crc32 应将 crc 赋值为 (crc >> 1) ^ 0xEDB88320u，当 (crc & 1u) != 0u 时。",
+                "在该循环（k < 8）的每次迭代中，函数 Crc32 应将 crc 赋值为 (crc >> 1) ^ 0xEDB88320u，当 (crc & 1u) 不等于 0u 时。",
             ),
             "{}",
             if_branch.description
@@ -936,7 +994,7 @@ mod tests {
         let if_branch = draft_for_lang(src, "Crc32", 4, "en");
         assert!(
             if_branch.description.starts_with(
-                "In each iteration of the loop where k < 8 holds, the Crc32 function shall set crc to (crc >> 1) ^ 0xEDB88320u if (crc & 1u) != 0u.",
+                "In each iteration of the loop where k < 8 holds, the Crc32 function shall set crc to (crc >> 1) ^ 0xEDB88320u if (crc & 1u) is not equal to 0u.",
             ),
             "{}",
             if_branch.description
@@ -970,7 +1028,7 @@ mod tests {
         let d = draft_for_lang(src, "grade", 0, "en");
         assert_eq!(
             d.description,
-            "The grade function shall return 1 if s >= 60."
+            "The grade function shall return 1 if s is greater than or equal to 60."
         );
         assert_eq!(d.verify_method, "Test");
 
