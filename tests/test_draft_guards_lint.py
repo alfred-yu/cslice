@@ -28,22 +28,23 @@ def plan(src: str, name: str):
     return plan_function_slices(src, f.start_line, f.end_line)
 
 
-def test_draft_carries_guard_prefix_zh():
+def test_draft_carries_guard_condition_trailing_zh():
     items = plan(GUARD_SRC, "f")
     d = generate_draft("f", items[2], language="zh")  # 循环头片
-    assert d.description.startswith("当 !(p == 0 || n <= 0) 时，")
-    assert "函数 f 应在满足 i < n 的条件下重复执行循环迭代" in d.description
+    # 守卫条件行内后置（单一原子条件）
+    assert d.description.endswith("，当 !(p == 0 || n <= 0) 时。")
+    assert d.description.startswith("函数 f 应在满足 i < n 的条件下重复执行循环迭代")
     # 守卫之前的初始化片不受影响
     assert generate_draft("f", items[0], language="zh").description == "函数 f 应将局部变量 s 初始化为 0。"
 
 
-def test_draft_guard_prefix_outermost_order_en():
+def test_draft_guard_condition_trailing_en():
     items = plan(GUARD_SRC, "f")
     d = generate_draft("f", items[3], language="en")  # 循环体计算片
-    # 守卫前缀在最外层，循环语境在其内
+    # 循环语境前导，守卫条件句尾 when 后置
     assert d.description == (
-        "When !(p == 0 || n <= 0), in each iteration of the loop where i < n holds, "
-        "the f function shall execute s += p[i]."
+        "In each iteration of the loop where i < n holds, "
+        "the f function shall execute s += p[i] when !(p == 0 || n <= 0)."
     )
 
 

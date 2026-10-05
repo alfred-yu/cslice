@@ -33,35 +33,23 @@ pub struct ReqDraft {
 /// - 循环体嵌套拆分产生的片（内层循环/循环内分支/尾部计算片）的
 ///   `summary.parent_loop_cond` 携带直接父循环条件，描述加入
 ///   "（外层）循环每次迭代中"上下文，保证需求在其执行语境下无歧义；
-/// - `item.guard_conds` 携带执行前置守卫条件（卫语句放行条件，按序累积），
-///   合取为 `!(a) && !(b)` 形式的单一条件，以 "当 … 时，"/"When …, " 前缀
-///   置于最外层——卫语句未放行则执行流到达不了本片，先于循环语境。
+/// - 条件（守卫条件按序 + if 分支条件）统一**后置**：
+///   单一简单条件行内（"… when {cond}." / "…，当 {cond} 时。"）；
+///   多条件、复合条件（含顶层 `||`/`&&`）或多行为清单时用结构化条件块——
+///   "when:" / "当：" 引出编号清单，顶层项以 -AND- 连接，复合项拆 1a/1b
+///   子项加括号并以 -AND-/-OR- 连接（-AND- 标识且，-OR- 标识或）。
 pub fn generate_draft(func_name: &str, item: &SlicePlanItem, language: &str) -> ReqDraft {
-    let draft = generate_from_parts(
+    let mut conditions: Vec<String> = item.guard_conds.clone();
+    let (draft, is_list) = generate_from_parts(
         func_name,
         item.kind,
         &item.summary,
         item.start_line,
         item.end_line,
         language,
+        &mut conditions,
     );
-    with_guard_context(draft, &item.guard_conds, language)
-}
-
-/// 守卫条件前缀：合取为单一条件后复用 frame.cond_prefix 句式，置于最外层
-fn with_guard_context(draft: ReqDraft, guards: &[String], language: &str) -> ReqDraft {
-    if guards.is_empty() {
-        return draft;
-    }
-    let cond = guards.join(" && ");
-    let prefix = templates::render(
-        templates::lookup(language, "frame.cond_prefix"),
-        &[("condition", cond.as_str())],
-    );
-    ReqDraft {
-        description: join_prefixed(&prefix, draft.description, language == "en"),
-        verify_method: draft.verify_method,
-    }
+    attach_conditions(draft, &conditions, is_list, language)
 }
 
 /// 兜底草稿：语义提取失败（空函数体/无法解析的行为）时使用。
@@ -87,7 +75,9 @@ pub fn fallback_draft(
     }
 }
 
-/// 按切片类型分派的草稿生成主体（与切片行范围解耦，兜底文案需要行范围）
+/// 按切片类型分派的草稿生成主体（与切片行范围解耦，兜底文案需要行范围）。
+/// Branch 的条件表达式不进句子，追加进 `conditions` 由顶层统一后置渲染。
+/// 返回 (草稿, 是否为多行为编号清单)。
 fn generate_from_parts(
     func_name: &str,
     kind: SlicePlanKind,
@@ -95,12 +85,17 @@ fn generate_from_parts(
     start_line: u32,
     end_line: u32,
     language: &str,
-) -> ReqDraft {
+    conditions: &mut Vec<String>,
+) -> (ReqDraft, bool) {
     let phrases = behavior_phrases(summary, kind, language);
+    let is_list = phrases.len() > 1;
 
-    match kind {
+    let draft = match kind {
         SlicePlanKind::Branch => {
             let d = branch_draft(func_name, summary, &phrases, language);
+            if let Some(cond) = &summary.condition {
+                conditions.push(cond.clone());
+            }
             with_parent_context(d, summary, language)
         }
         SlicePlanKind::Loop => loop_draft(func_name, summary, language),
@@ -112,7 +107,124 @@ fn generate_from_parts(
         SlicePlanKind::Computation => {
             computation_draft(func_name, summary, &phrases, start_line, end_line, language)
         }
+    };
+    (draft, is_list)
+}
+
+/// 条件后置：单一简单条件行内；多条件、复合条件或多行为清单用结构化
+/// "when:"/"当：" 块（编号项 -AND- 连接，复合项拆 1a/1b 子项加括号）。
+fn attach_conditions(
+    draft: ReqDraft,
+    conditions: &[String],
+    is_list: bool,
+    language: &str,
+) -> ReqDraft {
+    if conditions.is_empty() {
+        return draft;
     }
+    let en = language == "en";
+    let compound = conditions.iter().any(|c| split_top_level(c).is_some());
+    let base = draft
+        .description
+        .trim_end_matches(['.', '。'])
+        .to_string();
+    let description = if conditions.len() == 1 && !compound && !is_list {
+        // 单一简单条件：行内
+        let cond = &conditions[0];
+        if en {
+            format!("{base} when {cond}.")
+        } else {
+            format!("{base}，当 {cond} 时。")
+        }
+    } else {
+        let intro = if en { " when:" } else { "，当：" };
+        format!("{base}{intro}\n{}", render_condition_block(conditions))
+    };
+    ReqDraft { description, verify_method: draft.verify_method }
+}
+
+/// 结构化条件块：顶层项按序编号（1. 2. …），项间 -AND- 连接（守卫与分支
+/// 条件是合取关系）；含顶层 `||`/`&&` 的项拆为 1a/1b 子项加括号，
+/// 连接符 -OR-/-AND- 反映实际逻辑。
+fn render_condition_block(conditions: &[String]) -> String {
+    let items: Vec<String> = conditions
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let n = i + 1;
+            match split_top_level(c) {
+                None => format!("{n}.{c}"),
+                Some((parts, is_or)) => {
+                    let op = if is_or { "-OR-" } else { "-AND-" };
+                    // 首子项紧跟 "1.("，其余子项与连接符同缩进（4 空格），"   )" 收括号
+                    let subs: Vec<String> = parts
+                        .iter()
+                        .enumerate()
+                        .map(|(j, p)| {
+                            let label = format!("{}{}.{}", n, sub_letter(j), p);
+                            if j == 0 {
+                                label
+                            } else {
+                                format!("    {label}")
+                            }
+                        })
+                        .collect();
+                    format!("{n}.({}\n   )", subs.join(&format!("\n    {op}\n")))
+                }
+            }
+        })
+        .collect();
+    items.join("\n-AND-\n")
+}
+
+/// 子项编号字母：1a、1b、1c …
+fn sub_letter(j: usize) -> char {
+    (b'a' + j as u8) as char
+}
+
+/// 按 0 层括号深度拆分条件表达式：优先按 `||`（析取，-OR-），
+/// 无 0 层 `||` 时按 `&&`（合取，-AND-）。原子条件返回 None。
+fn split_top_level(cond: &str) -> Option<(Vec<String>, bool)> {
+    let bytes = cond.as_bytes();
+    let mut depth = 0i32;
+    let mut or_pos: Vec<usize> = Vec::new();
+    let mut and_pos: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'|' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'|' => {
+                or_pos.push(i);
+                i += 1;
+            }
+            b'&' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'&' => {
+                and_pos.push(i);
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if !or_pos.is_empty() {
+        Some((split_at(cond, &or_pos), true))
+    } else if !and_pos.is_empty() {
+        Some((split_at(cond, &and_pos), false))
+    } else {
+        None
+    }
+}
+
+/// 按运算符位置（0 层深度）切分并修剪各段空白
+fn split_at(cond: &str, pos: &[usize]) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    for &p in pos {
+        parts.push(cond[start..p].trim().to_string());
+        start = p + 2;
+    }
+    parts.push(cond[start..].trim().to_string());
+    parts
 }
 
 /// 前缀 + 句子拼接：英文句子首字母小写（与既有句式一致），中文直接拼接
@@ -219,9 +331,8 @@ fn computation_draft(
 }
 
 /// 分支块草稿：有条件分支（if / else-if）与无条件分支（else）。
-/// 条件后置：if 条件放句尾（en "when …"；zh "，当 … 时"），多行为清单在
-/// "in order"/"按顺序执行" 之后、冒号之前插条件，保证条件覆盖清单全部行为；
-/// else 无条件表达式，保留前导句式。
+/// 条件表达式不进句子——由顶层 [`attach_conditions`] 统一后置渲染
+/// （行内或结构化 when: 块）；else 无条件表达式，保留前导句式。
 fn branch_draft(
     func_name: &str,
     summary: &BlockSummary,
@@ -229,7 +340,6 @@ fn branch_draft(
     language: &str,
 ) -> ReqDraft {
     let en = language == "en";
-    // else 保留前导句式（无条件表达式可后置）
     let prefix: Option<String> = if summary.is_else {
         Some(templates::lookup(language, "frame.else_prefix").to_string())
     } else {
@@ -246,47 +356,15 @@ fn branch_draft(
         } else {
             None
         }
-    } else if let Some(cond) = &summary.condition {
-        // 条件后置：单行为直述 / 多行为清单（条件覆盖清单全部行为）
-        Some(if phrases.len() == 1 {
-            templates::render(
-                templates::lookup(language, "frame.single_cond"),
-                &[
-                    ("function_name", func_name),
-                    ("behavior", phrases[0].as_str()),
-                    ("condition", cond),
-                ],
-            )
-        } else {
-            templates::render(
-                templates::lookup(language, "frame.list_cond"),
-                &[
-                    ("function_name", func_name),
-                    ("condition", cond),
-                    ("numbered", join_numbered(phrases, en).as_str()),
-                ],
-            )
-        })
     } else {
         Some(single_or_list(func_name, phrases, language))
     };
 
-    // 有条件但无行为事实：兜底句 + 条件后缀（单/清单模板已含条件，不重复）
-    let needs_suffix = phrases.is_empty() && summary.condition.is_some();
-
     match sentence {
         Some(s) => {
-            let description = match (prefix, needs_suffix) {
-                (Some(p), _) => join_prefixed(&p, s, en),
-                (None, true) => {
-                    let cond = summary.condition.clone().unwrap_or_default();
-                    let suffix = templates::render(
-                        templates::lookup(language, "frame.cond_suffix"),
-                        &[("condition", cond.as_str())],
-                    );
-                    format!("{}{}.", s.trim_end_matches('.'), suffix)
-                }
-                _ => s,
+            let description = match &prefix {
+                Some(p) => join_prefixed(p, s, en),
+                None => s,
             };
             ReqDraft {
                 description,
@@ -675,8 +753,8 @@ mod tests {
     }
 
     #[test]
-    fn guard_condition_prefixes_description() {
-        // 守卫语句后的循环片：草稿以取反守卫条件前缀置顶
+    fn guard_condition_trailing_inline_and_block() {
+        // 单一原子守卫条件：行内后置（en "when …." / zh "，当 … 时。"）
         let src = "int f(const int* p, int n) {
     int s = 0;
     if (p == 0 || n <= 0) {
@@ -696,29 +774,29 @@ mod tests {
         let d = generate_draft("f", &items[2], "zh");
         assert_eq!(
             d.description,
-            "当 !(p == 0 || n <= 0) 时，函数 f 应在满足 i < n 的条件下重复执行循环迭代（循环控制：int i = 0；i < n；i++）。",
+            "函数 f 应在满足 i < n 的条件下重复执行循环迭代（循环控制：int i = 0；i < n；i++），当 !(p == 0 || n <= 0) 时。",
             "{}",
             d.description
         );
         let d_en = generate_draft("f", &items[2], "en");
         assert!(
-            d_en.description
-                .starts_with("When !(p == 0 || n <= 0), the f function shall iterate"),
+            d_en.description.ends_with("when !(p == 0 || n <= 0)."),
             "{}",
             d_en.description
         );
-        // 守卫之后的循环体计算片：守卫前缀在最外层，循环语境在其内
+        // 守卫之后的循环体计算片：循环语境前导，守卫条件行内后置
         let body = generate_draft("f", &items[3], "zh");
         assert_eq!(
             body.description,
-            "当 !(p == 0 || n <= 0) 时，在该循环（i < n）的每次迭代中，函数 f 应执行 s += p[i]。",
+            "在该循环（i < n）的每次迭代中，函数 f 应执行 s += p[i]，当 !(p == 0 || n <= 0) 时。",
             "{}",
             body.description
         );
     }
 
     #[test]
-    fn guard_conditions_accumulate_in_draft() {
+    fn guard_conditions_accumulate_into_when_block() {
+        // 多个守卫条件累积 → 结构化 when: 块（编号项 -AND- 连接）
         let src = "int f(int a, int b) {
     if (a == 0) {
         return 1;
@@ -730,13 +808,26 @@ mod tests {
 }
 ";
         let items = plan_items_all(src, "f");
-        // return 片累积两个守卫条件，合取为单一条件表达式
+        // return 片累积两个守卫条件
         let d = generate_draft("f", &items[2], "zh");
-        assert!(
-            d.description
-                .starts_with("当 !(a == 0) && !(b == 0) 时，函数 f 应返回 work(a, b)"),
+        assert_eq!(
+            d.description,
+            "函数 f 应返回 work(a, b)，当：
+1.!(a == 0)
+-AND-
+2.!(b == 0)",
             "{}",
             d.description
+        );
+        let d_en = generate_draft("f", &items[2], "en");
+        assert_eq!(
+            d_en.description,
+            "The f function shall return work(a, b) when:
+1.!(a == 0)
+-AND-
+2.!(b == 0)",
+            "{}",
+            d_en.description
         );
     }
 

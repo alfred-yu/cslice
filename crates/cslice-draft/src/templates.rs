@@ -26,10 +26,6 @@ pub const FRAME_KEYS: &[&str] = &[
     "frame.single",
     "frame.list",
     "frame.branch_empty",
-    "frame.cond_prefix",
-    "frame.cond_suffix",
-    "frame.single_cond",
-    "frame.list_cond",
     "frame.else_prefix",
     "frame.loop_prefix",
     "frame.outer_loop_prefix",
@@ -78,14 +74,6 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
             "frame.branch_empty" => {
                 "The {function_name} function shall perform the processing logic within this branch."
             }
-            "frame.cond_prefix" => "When {condition}, ",
-            "frame.cond_suffix" => " when {condition}",
-            "frame.single_cond" => {
-                "The {function_name} function shall {behavior} when {condition}."
-            }
-            "frame.list_cond" => {
-                "The {function_name} function shall perform the following operations in order when {condition}: {numbered}."
-            }
             "frame.else_prefix" => "When none of the above conditions holds, ",
             "frame.loop_prefix" => "In each iteration of the loop where {parent_loop_cond} holds, ",
             "frame.outer_loop_prefix" => {
@@ -121,10 +109,6 @@ fn default_template(lang: &str, key: &str) -> Option<&'static str> {
             "frame.single" => "函数 {function_name} 应{behavior}。",
             "frame.list" => "函数 {function_name} 应按顺序执行以下操作：{numbered}。",
             "frame.branch_empty" => "函数 {function_name} 应执行该分支内的处理逻辑。",
-            "frame.cond_prefix" => "当 {condition} 时，",
-            "frame.cond_suffix" => "，当 {condition} 时",
-            "frame.single_cond" => "函数 {function_name} 应{behavior}，当 {condition} 时。",
-            "frame.list_cond" => "函数 {function_name} 应在 {condition} 成立时按顺序执行以下操作：{numbered}。",
             "frame.else_prefix" => "当上述条件均不成立时，",
             "frame.loop_prefix" => "在该循环（{parent_loop_cond}）的每次迭代中，",
             "frame.outer_loop_prefix" => "在外层循环（{parent_loop_cond}）的每次迭代中，",
